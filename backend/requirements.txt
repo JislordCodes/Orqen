@@ -1,0 +1,8 @@
+strands-agents[openai]
+fastapi
+uvicorn[standard]
+redis
+docker
+python-dotenv
+pydantic
+httpx
