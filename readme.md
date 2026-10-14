@@ -2,12 +2,12 @@
 
 A Replit-style Nodebase. You describe an app in a chat, an AI agent writes real code inside a private sandbox, and you watch it run live. The code stays a normal project, so it can be exported to GitHub and still work.
 
-**Status:** the backend is built and has run end to end. The frontend has not been started yet.
+**Status:** the backend is built and has run end to end. The frontend (node-canvas editor) is in `frontend/`; see `frontend/README.md`.
 
 | Part | Folder | Status |
 |---|---|---|
 | Backend (API, agent, sandboxes, live preview) | `backend/` | Working starter |
-| Frontend (node-canvas editor and chat) | `frontend/` | Not started |
+| Frontend (node-canvas editor and chat) | `frontend/` | First version: Vite + React + React Flow, works live or in Demo mode |
 
 ## How it works
 
@@ -110,9 +110,9 @@ All requests send the header `X-User-Id` (development auth only, see "Before goi
 
 **Live preview.** The agent runs the built app on `0.0.0.0:3000` inside the sandbox. To make previews open in a browser, set `PREVIEW_DOMAIN` in `backend/.env` to a wildcard domain pointing at your server. With no domain of your own, use nip.io, for example `PREVIEW_DOMAIN=3.80.104.25.nip.io`. Preview links are secret URLs that expire after 24 hours. WebSockets (such as Vite hot reload) are not proxied yet.
 
-## Frontend (not started)
+## Frontend
 
-Nothing exists in `frontend/` yet. What it is meant to be:
+Built in `frontend/` (Vite, React, TypeScript, Tailwind, React Flow, Monaco). Run it with `cd frontend && npm install && npm run dev`. The original brief:
 
 - A **node-canvas editor**: every software component (auth, database, and so on) is a node, and you connect nodes together.
 - Tabs for **Editor**, **Executions** and **Tests**, with a **chat bar** along the bottom.

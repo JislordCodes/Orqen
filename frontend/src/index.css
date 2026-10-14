@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f5f2ec;
+  --color-card: #fdfcf9;
+  --color-sunk: #efebe3;
+  --color-ink: #1a1916;
+  --color-ink-2: #45423c;
+  --color-mute: #8c877d;
+  --color-faint: #b7b1a6;
+  --color-line: #e5e0d6;
+  --color-line-2: #d6cfc2;
+  --color-wire: #bdb6a9;
+  --color-signal: #ff5a1f;
+  --color-signal-soft: #fff0e9;
+  --color-ok: #2e8b57;
+  --color-ok-soft: #e8f4ec;
+  --color-warn: #b97a10;
+  --color-warn-soft: #fbf1dc;
+  --color-bad: #d7392b;
+  --color-bad-soft: #fcebe8;
+
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  --font-dot: "Doto Variable", "Geist Mono Variable", monospace;
+
+  --shadow-card: 0 1px 0 rgba(26, 25, 22, 0.04), 0 1px 2px rgba(26, 25, 22, 0.05);
+  --shadow-lift: 0 1px 0 rgba(26, 25, 22, 0.04), 0 8px 24px -8px rgba(26, 25, 22, 0.18);
+  --shadow-float: 0 1px 0 rgba(26, 25, 22, 0.05), 0 18px 40px -12px rgba(26, 25, 22, 0.22);
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: #ffd9c9; }
+
+/* Dot-matrix display type: used sparingly for the wordmark, kind labels and big numbers. */
+.dot { font-family: var(--font-dot); font-weight: 700; letter-spacing: 0.02em; }
+.eyebrow { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-mute); }
+
+/* Hairline scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--color-line-2) transparent; }
+
+/* ---------- React Flow, re-skinned ---------- */
+.react-flow { --xy-background-color: transparent; }
+.react-flow__attribution { display: none; }
+.react-flow__edge-path { stroke: var(--color-wire); stroke-width: 1.25; }
+.react-flow__edge.selected .react-flow__edge-path { stroke: var(--color-ink); }
+.react-flow__handle { width: 9px; height: 9px; background: var(--color-card); border: 1.25px solid var(--color-wire); }
+.react-flow__handle:hover { border-color: var(--color-ink); }
+.react-flow__controls { box-shadow: var(--shadow-card); border: 1px solid var(--color-line); border-radius: 10px; overflow: hidden; }
+.react-flow__controls-button { background: var(--color-card); border-bottom: 1px solid var(--color-line); width: 28px; height: 28px; }
+.react-flow__controls-button svg { fill: var(--color-ink-2); max-width: 11px; max-height: 11px; }
+.react-flow__controls-button:hover { background: var(--color-sunk); }
+.react-flow__minimap { border: 1px solid var(--color-line); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-card); }
+
+/* Marching-ants wire while data flows through it during a run */
+@keyframes march { to { stroke-dashoffset: -16; } }
+.wire-live .react-flow__edge-path { stroke: var(--color-signal); stroke-dasharray: 4 4; animation: march 0.6s linear infinite; stroke-width: 1.5; }
+.wire-broken .react-flow__edge-path { stroke: var(--color-bad); stroke-width: 1.5; }
+.wire-impact .react-flow__edge-path { stroke: var(--color-bad); stroke-dasharray: 3 3; animation: march 0.9s linear infinite; }
+.wire-dim { opacity: 0.25; }
+
+/* A node the agent is writing right now */
+@keyframes scan { 0% { background-position: 0 0; } 100% { background-position: 24px 0; } }
+.node-working::before {
+  content: ""; position: absolute; inset: -1px; border-radius: 13px; padding: 1.5px;
+  background: repeating-linear-gradient(90deg, var(--color-signal) 0 6px, transparent 6px 12px);
+  background-size: 24px 100%; animation: scan 0.8s linear infinite;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+}
+
+@keyframes pop { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.animate-pop { animation: pop 0.22s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.animate-fade { animation: fade 0.2s ease both; }
+@keyframes blink { 50% { opacity: 0; } }
+.caret::after { content: "▍"; margin-left: 1px; animation: blink 1s steps(1) infinite; color: var(--color-signal); }
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.pulse-dot { animation: pulse-dot 1.2s ease-in-out infinite; }
