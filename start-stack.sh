@@ -16,6 +16,15 @@ fi
 docker image inspect appbuilder-sandbox:latest >/dev/null 2>&1 || docker build -q --network host -t appbuilder-sandbox:latest "$ROOT/backend/sandbox_image" >/tmp/build.log 2>&1
 cd "$ROOT/backend"
 curl -s -m2 localhost:8000/health >/dev/null || (SANDBOX_NETWORK=host PREVIEW_URL_FILE=/tmp/lr-3000.url setsid nohup .venv/bin/uvicorn app.api:app --port 8000 >/tmp/api.log 2>&1 &)
+# No worker means any run lock left in Redis (restored from its dump after a reset) is stale: it would
+# make POST /runs answer 409 for up to an hour. Close those runs with an error event and free the lock.
+if ! ps aux | grep -q "[a]pp.worker"; then
+  for k in $(redis-cli --scan --pattern 'lock:*'); do
+    rid=$(redis-cli get "$k")
+    [ -n "$rid" ] && redis-cli xadd "run:$rid" '*' type error data '{"message": "The server restarted and this run was cut off. Send the prompt again."}' >/dev/null
+    redis-cli del "$k" >/dev/null
+  done
+fi
 ps aux | grep -q "[a]pp.worker" || (MAX_TOOL_CALLS=${MAX_TOOL_CALLS:-200} SANDBOX_NETWORK=host BASE_URL=https://api.studio.nebius.com/v1/ MODEL_ID=${MODEL_ID:-moonshotai/Kimi-K2.7-Code} setsid nohup .venv/bin/python -m app.worker >/tmp/worker.log 2>&1 &)
 cd "$ROOT/frontend"
 curl -s -m2 -o /dev/null localhost:4173/ || (setsid nohup npx vite preview --host 0.0.0.0 --port 4173 >/tmp/vite.log 2>&1 &)
