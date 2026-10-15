@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, ChevronDown, ChevronUp, CornerDownLeft, Crosshair, Radar, Sparkles, X } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { useModel } from "@/lib/useModel";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { dependentsOf } from "@/lib/architecture";
 import { timelineOf, type Step, type TimelineItem } from "@/lib/workspace";
 import type { Run } from "@/lib/types";
@@ -26,6 +27,7 @@ export function ChatDock() {
   const previewOpen = useStore((s) => s.preview.open);
   const { setChatOpen, setDraft, send } = useStore.getState();
   const input = useRef<HTMLTextAreaElement>(null);
+  const mobile = useIsMobile();
   const scroller = useRef<HTMLDivElement>(null);
 
   const scope = arch.nodes.find((n) => n.id === scopeId);
@@ -62,6 +64,16 @@ export function ChatDock() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [draft]);
 
+  // Open the thread while the agent works; fold it away shortly after it finishes so the graph is the hero.
+  const wasLive = useRef(!!liveRun);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    if (liveRun && !wasLive.current) setChatOpen(true);
+    if (!liveRun && wasLive.current) t = setTimeout(() => setChatOpen(false), mobile ? 1200 : 2500);
+    wasLive.current = !!liveRun;
+    return () => clearTimeout(t);
+  }, [liveRun, mobile, setChatOpen]);
+
   const submit = () => {
     const text = draft.trim();
     if (!text || liveRun) return;
@@ -70,29 +82,35 @@ export function ChatDock() {
   };
 
   const placeholder = liveRun
-    ? "The agent is working… you can write your next change, then send it when it finishes."
+    ? mobile ? "Agent is working… draft your next change" : "The agent is working… you can write your next change, then send it when it finishes."
     : scope
       ? `Change ${scope.label} only… e.g. “add rate limiting”`
       : runs.length
         ? "Describe a change to the system…"
         : "Describe the app you want to build…";
 
+  // On a phone the inspector and preview are full-width sheets, so the dock steps aside.
+  if (mobile && (previewOpen || selectedNodeId)) return null;
+
   return (
     <div
-      className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-4 pb-4 transition-[padding] duration-300"
+      className={cn(
+        "pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center transition-[padding] duration-300",
+        mobile ? "px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]" : "px-4 pb-4",
+      )}
       // Slide left so the inspector / preview never covers the prompt.
-      style={{ paddingRight: previewOpen ? "calc(min(720px, 58%) + 2rem)" : selectedNodeId ? 432 : undefined }}
+      style={mobile ? undefined : { paddingRight: previewOpen ? "calc(min(720px, 58%) + 2rem)" : selectedNodeId ? 432 : undefined }}
     >
       <div className="pointer-events-auto w-[720px] max-w-full">
         {open && recent.length > 0 && (
           <div className="animate-pop mb-2 overflow-hidden rounded-2xl border border-line bg-card/95 shadow-float backdrop-blur">
             <div className="flex items-center justify-between border-b border-line px-4 py-2">
               <span className="eyebrow">Agent</span>
-              <button onClick={() => setChatOpen(false)} className="rounded p-0.5 text-mute hover:bg-sunk hover:text-ink" aria-label="Collapse">
+              <button onClick={() => setChatOpen(false)} className="rounded p-1.5 text-mute hover:bg-sunk hover:text-ink" aria-label="Collapse">
                 <ChevronDown size={14} />
               </button>
             </div>
-            <div ref={scroller} className="max-h-[42vh] space-y-5 overflow-y-auto px-4 py-4">
+            <div ref={scroller} className={cn("space-y-5 overflow-y-auto overscroll-contain px-4 py-4", mobile ? "max-h-[40dvh]" : "max-h-[42vh]")}>
               {recent.map((r) => <RunThread key={r.id} run={r} />)}
             </div>
           </div>
@@ -116,7 +134,7 @@ export function ChatDock() {
                 </>
               )}
               {!open && recent.length > 0 && (
-                <button onClick={() => setChatOpen(true)} className="ml-auto flex items-center gap-1 text-[11px] text-mute hover:text-ink">
+                <button onClick={() => setChatOpen(true)} className="ml-auto flex items-center gap-1 py-1 text-[11px] text-mute hover:text-ink md:py-0">
                   {liveRun ? <span className="flex items-center gap-1 text-signal"><span className="pulse-dot h-1.5 w-1.5 rounded-full bg-signal" /> working</span> : "history"} <ChevronUp size={12} />
                 </button>
               )}
@@ -137,7 +155,7 @@ export function ChatDock() {
                 if (e.key === "Escape") (e.target as HTMLTextAreaElement).blur();
               }}
               placeholder={placeholder}
-              className="max-h-40 min-h-[38px] flex-1 resize-none bg-transparent py-2 text-[14px] leading-snug text-ink outline-none placeholder:text-faint"
+              className="max-h-40 min-h-[38px] flex-1 resize-none bg-transparent py-2 text-[16px] md:text-[14px] leading-snug text-ink outline-none placeholder:text-faint"
             />
             {!scope && selectedNodeId && !draft && (
               <button
@@ -150,13 +168,13 @@ export function ChatDock() {
             <button
               onClick={submit}
               disabled={!draft.trim() || !!liveRun}
-              className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ink text-paper transition-all hover:bg-signal disabled:bg-line disabled:text-faint"
+              className="mb-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-ink md:h-9 md:w-9 text-paper transition-all hover:bg-signal disabled:bg-line disabled:text-faint"
               aria-label="Send"
             >
               <ArrowUp size={16} />
             </button>
           </div>
-          <div className="flex items-center justify-between px-3.5 pb-2 text-[10.5px] text-faint">
+          <div className="hidden items-center justify-between px-3.5 pb-2 text-[10.5px] text-faint md:flex">
             <span className="flex items-center gap-1"><Kbd>/</Kbd> focus · <CornerDownLeft size={10} /> send · ⇧↵ new line</span>
             <span className="font-mono">one run at a time per project</span>
           </div>

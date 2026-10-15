@@ -20,6 +20,7 @@ import ComponentNode, { type FlowNode } from "./ComponentNode";
 import { WireEdge, type FlowEdge } from "./WireEdge";
 import { EmptyCanvas } from "./EmptyCanvas";
 import { CanvasHud } from "./CanvasHud";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { Button } from "@/components/ui/button";
 
 const nodeTypes = { component: ComponentNode };
@@ -27,6 +28,7 @@ const edgeTypes = { wire: WireEdge };
 
 export function Canvas() {
   const { arch, ws, broken, liveRun } = useModel();
+  const mobile = useIsMobile();
   const selectedNodeId = useStore((s) => s.selectedNodeId);
   const impactPreviewId = useStore((s) => s.impactPreviewId);
   const draft = useStore((s) => s.draft);
@@ -49,14 +51,30 @@ export function Canvas() {
   }, [projectId]);
 
   // Re-layout when the set of components changes, keeping anything the user moved.
-  const idKey = arch.nodes.map((n) => n.id).sort().join("|") + `#${layoutTick}`;
+  const idKey = arch.nodes.map((n) => n.id).sort().join("|") + `#${layoutTick}#${mobile ? "TB" : "LR"}`;
   useEffect(() => {
-    const auto = autoLayout(arch.nodes, arch.wires);
+    if (mobile) dragged.current = new Set(); // orientation changes reset manual moves
+    const auto = autoLayout(arch.nodes, arch.wires, mobile ? "TB" : "LR");
     for (const [id, p] of Object.entries(auto)) if (!dragged.current.has(id)) positions.current[id] = p;
-    const t = setTimeout(() => fitView({ padding: 0.22, duration: 500, maxZoom: 1.05 }), 30);
+    const t = setTimeout(() => fitView(mobile ? { padding: 0.12, duration: 500, maxZoom: 0.95, minZoom: 0.55 } : { padding: 0.22, duration: 500, maxZoom: 1.05 }), 30);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idKey]);
+
+  // Re-fit when the chat folds away or the window changes size (rotate, resize, split screen).
+  const chatOpen = useStore((s) => s.chatOpen);
+  const fit = () => fitView(mobile ? { padding: 0.12, duration: 400, maxZoom: 0.95, minZoom: 0.55 } : { padding: 0.22, duration: 400, maxZoom: 1.05 });
+  useEffect(() => {
+    if (!chatOpen && arch.nodes.length) { const t = setTimeout(fit, 250); return () => clearTimeout(t); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatOpen]);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout>;
+    const on = () => { clearTimeout(t); t = setTimeout(() => !dragged.current.size && fit(), 200); };
+    window.addEventListener("resize", on);
+    return () => { window.removeEventListener("resize", on); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobile]);
 
   // Which nodes "would break": hover preview, or the scope of a prompt being typed.
   const impactSource = impactPreviewId ?? (draftScope && draft.trim() ? draftScope : undefined);
@@ -76,6 +94,7 @@ export function Canvas() {
           position: dragged.current.has(c.id) ? prevPos[c.id] ?? positions.current[c.id] : positions.current[c.id] ?? prevPos[c.id] ?? { x: 0, y: 0 },
           data: {
             c,
+            vertical: mobile,
             v: {
               health,
               selected: c.id === selectedNodeId,
@@ -147,8 +166,8 @@ export function Canvas() {
         <Background variant={BackgroundVariant.Dots} gap={18} size={1.1} color="#d6cfc2" />
         {arch.nodes.length > 0 && (
           <>
-            <Controls position="bottom-left" showInteractive={false} style={{ marginBottom: 88 }} />
-            <MiniMap
+            <Controls position={mobile ? "top-right" : "bottom-left"} showInteractive={false} showFitView style={mobile ? { marginTop: 52 } : { marginBottom: 88 }} />
+            {!mobile && <MiniMap className="!hidden xl:!block"
               position="bottom-right"
               pannable
               zoomable
@@ -159,16 +178,16 @@ export function Canvas() {
                 const d = (n as FlowNode).data;
                 return d.v.health === "broken" ? "#d7392b" : `${KIND_STYLE[d.c.kind].color}66`;
               }}
-            />
+            />}
           </>
         )}
       </ReactFlow>
 
       {arch.nodes.length === 0 ? <EmptyCanvas /> : <CanvasHud />}
       {arch.nodes.length > 1 && (
-        <div className="absolute right-4 top-4 z-10">
-          <Button size="sm" variant="secondary" onClick={tidy} title="Re-run auto layout">
-            <LayoutGrid size={12} /> Tidy up
+        <div className="absolute right-3 top-3 z-10 md:right-4 md:top-4">
+          <Button size={mobile ? "icon" : "sm"} variant="secondary" onClick={tidy} title="Re-run auto layout" aria-label="Tidy up">
+            <LayoutGrid size={mobile ? 15 : 12} /> {!mobile && "Tidy up"}
           </Button>
         </div>
       )}

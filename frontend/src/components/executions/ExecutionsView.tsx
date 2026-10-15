@@ -1,7 +1,8 @@
 import { useMemo } from "react";
-import { Check, Crosshair, FileEdit, FilePlus2, History, Loader2, LocateFixed, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, Check, Crosshair, FileEdit, FilePlus2, History, Loader2, LocateFixed, RotateCcw, X } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { useModel } from "@/lib/useModel";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { timelineOf } from "@/lib/workspace";
 import type { Run } from "@/lib/types";
 import { cn, duration, timeAgo } from "@/lib/utils";
@@ -18,6 +19,7 @@ export function ExecutionsView() {
   const selectRun = useStore((s) => s.selectRun);
   const list = [...runs].reverse();
   const run = list.find((r) => r.id === selectedRunId) ?? list[0];
+  const mobile = useIsMobile();
 
   if (!runs.length) {
     return (
@@ -28,7 +30,10 @@ export function ExecutionsView() {
   }
 
   return (
-    <div className="grid h-full grid-cols-[340px_1fr] gap-4 p-4">
+    <div className="grid h-full grid-cols-1 gap-4 p-2 md:grid-cols-[340px_1fr] md:p-4">
+      {mobile && selectedRunId && run ? (
+        <RunDetail run={run} onBack={() => selectRun(undefined)} />
+      ) : (
       <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-line bg-card shadow-card">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <span className="eyebrow">Executions</span>
@@ -43,7 +48,7 @@ export function ExecutionsView() {
             >
               <StatusIcon status={r.status} />
               <div className="min-w-0 flex-1">
-                <p className="line-clamp-2 text-[12.5px] leading-snug text-ink">{r.prompt}</p>
+                <p className="line-clamp-2 text-[13.5px] leading-snug text-ink md:text-[12.5px]">{r.prompt}</p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-mute">
                   <span className="rounded bg-card px-1 py-[1px] shadow-card">{INTENT[r.intent]}</span>
                   {r.scope && <span className="flex items-center gap-0.5"><Crosshair size={9} /> {r.scope.label}</span>}
@@ -55,7 +60,8 @@ export function ExecutionsView() {
           ))}
         </div>
       </div>
-      {run && <RunDetail run={run} />}
+      )}
+      {!mobile && run && <RunDetail run={run} />}
     </div>
   );
 }
@@ -67,7 +73,7 @@ function StatusIcon({ status }: { status: Run["status"] }) {
   return <span className={cn(base, "bg-ok-soft text-ok")}><Check size={11} /></span>;
 }
 
-function RunDetail({ run }: { run: Run }) {
+function RunDetail({ run, onBack }: { run: Run; onBack?: () => void }) {
   const { send, select, setTab } = useStore.getState();
   const items = useMemo(() => timelineOf(run), [run]);
   const steps = items.filter((i) => i.kind === "step").map((i) => (i.kind === "step" ? i.step : null)!);
@@ -86,8 +92,13 @@ function RunDetail({ run }: { run: Run }) {
 
   return (
     <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-line bg-card shadow-card">
-      <div className="border-b border-line px-5 py-4">
-        <div className="flex items-start justify-between gap-4">
+      <div className="border-b border-line px-4 py-4 md:px-5">
+        {onBack && (
+          <button onClick={onBack} className="-ml-1 mb-2 flex items-center gap-1 rounded-md px-1 py-1 text-[12.5px] text-mute active:bg-sunk">
+            <ArrowLeft size={14} /> All executions
+          </button>
+        )}
+        <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:gap-4">
           <div className="min-w-0">
             <p className="text-[15px] font-semibold leading-snug tracking-[-0.01em]">{run.prompt}</p>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-mute">
@@ -121,7 +132,7 @@ function RunDetail({ run }: { run: Run }) {
           </div>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 md:px-5">
         <ol className="relative space-y-1 border-l border-line pl-5">
           {items.map((it) =>
             it.kind === "text" ? (

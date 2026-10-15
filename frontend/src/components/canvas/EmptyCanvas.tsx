@@ -16,20 +16,21 @@ export function EmptyCanvas() {
   const importRepo = useStore((s) => s.importRepo);
   const [url, setUrl] = useState("");
   return (
-    <div className="pointer-events-none absolute inset-0 flex items-center justify-center pb-28">
-      <div className="pointer-events-auto flex w-[580px] max-w-[92%] flex-col items-center text-center">
+    <div className="pointer-events-none absolute inset-0 overflow-y-auto">
+      <div className="flex min-h-full items-center justify-center px-4 pb-36 pt-6 md:pb-28 md:pt-0">
+      <div className="pointer-events-auto flex w-[580px] max-w-full flex-col items-center text-center">
         <button
           onClick={() => setDraft("", null)}
-          className="group flex h-[88px] w-[88px] items-center justify-center rounded-2xl border-[1.5px] border-dashed border-line-2 bg-card/60 text-mute transition-all hover:-translate-y-0.5 hover:border-ink hover:text-ink hover:shadow-lift"
+          className="group flex h-[72px] w-[72px] md:h-[88px] md:w-[88px] items-center justify-center rounded-2xl border-[1.5px] border-dashed border-line-2 bg-card/60 text-mute transition-all hover:-translate-y-0.5 hover:border-ink hover:text-ink hover:shadow-lift"
           aria-label="Describe your system"
         >
           <Plus size={26} strokeWidth={1.5} />
         </button>
-        <h1 className="dot mt-7 text-[34px] leading-none tracking-tight text-ink">describe your system</h1>
+        <h1 className="dot mt-5 text-[27px] md:mt-7 md:text-[34px] leading-none tracking-tight text-ink">describe your system</h1>
         <p className="mt-3 max-w-md text-[13.5px] leading-relaxed text-mute">
           The agent writes real code in a private sandbox. Every page, endpoint, table and service it creates appears here as a node, wired to what it depends on.
         </p>
-        <div className="mt-7 grid w-full grid-cols-3 gap-2.5">
+        <div className="mt-6 grid w-full grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-2.5 md:mt-7">
           {TEMPLATES.map((t) => (
             <button
               key={t.title}
@@ -40,7 +41,7 @@ export function EmptyCanvas() {
                 {t.title}
                 <ArrowUpRight size={13} className="text-faint transition-colors group-hover:text-signal" />
               </div>
-              <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-mute">{t.prompt}</p>
+              <p className="mt-1 line-clamp-2 text-[12px] sm:line-clamp-3 sm:text-[11px] leading-snug text-mute">{t.prompt}</p>
             </button>
           ))}
         </div>
@@ -55,9 +56,10 @@ export function EmptyCanvas() {
           className="mt-3 flex w-full items-center gap-2 rounded-xl border border-line bg-card p-1 pl-3 shadow-card focus-within:border-ink/40"
         >
           <Github size={14} className="shrink-0 text-mute" />
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" className="h-8 flex-1 bg-transparent font-mono text-[12px] outline-none placeholder:text-faint" />
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" className="h-9 min-w-0 flex-1 bg-transparent font-mono text-[16px] md:h-8 md:text-[12px] outline-none placeholder:text-faint" />
           <Button type="submit" size="sm" variant="primary" disabled={!url.trim()}>Map repo</Button>
         </form>
+      </div>
       </div>
     </div>
   );

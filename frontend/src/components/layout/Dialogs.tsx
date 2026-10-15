@@ -104,7 +104,7 @@ export function Toasts() {
   const toasts = useStore((s) => s.toasts);
   const dismiss = useStore((s) => s.dismissToast);
   return (
-    <div className="pointer-events-none fixed left-1/2 top-16 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+    <div className="pointer-events-none fixed left-1/2 top-28 z-[60] flex w-[calc(100%-1.5rem)] -translate-x-1/2 md:top-16 md:w-auto flex-col items-center gap-2">
       {toasts.map((t) => (
         <button
           key={t.id}

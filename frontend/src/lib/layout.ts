@@ -5,10 +5,11 @@ import { KIND_META } from "./architecture";
 export const NODE_W = 236;
 export const NODE_H = 86;
 
-/** Left-to-right flow, like n8n: callers on the left, what they depend on to the right. */
-export function autoLayout(nodes: Component[], wires: Wire[]) {
+/** Left-to-right flow, like n8n: callers on the left, what they depend on to the right.
+ *  Phones get top-to-bottom ("TB") so the graph scrolls with the thumb instead of shrinking. */
+export function autoLayout(nodes: Component[], wires: Wire[], dir: "LR" | "TB" = "LR") {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 36, ranksep: 96, marginx: 40, marginy: 40, ranker: "network-simplex" });
+  g.setGraph({ rankdir: dir, nodesep: dir === "TB" ? 28 : 36, ranksep: dir === "TB" ? 64 : 96, marginx: 40, marginy: 40, ranker: "network-simplex" });
   g.setDefaultEdgeLabel(() => ({}));
   const sorted = [...nodes].sort((a, b) => KIND_META[a.kind].order - KIND_META[b.kind].order);
   for (const n of sorted) g.setNode(n.id, { width: NODE_W, height: NODE_H });

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { ArrowLeft, ArrowRight, ExternalLink, FileText, Radar, Wrench, X } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { useModel } from "@/lib/useModel";
+import { useIsMobile } from "@/lib/useIsMobile";
 import { dependenciesOf, dependentsOf, healthOf, KIND_META } from "@/lib/architecture";
 import { KindIcon, KindTile } from "@/lib/kinds";
 import type { Component, Kind } from "@/lib/types";
@@ -30,12 +31,21 @@ export function Inspector() {
   const tab = useStore((s) => s.inspectorTab);
   const { select, setInspectorTab } = useStore.getState();
   const node = arch.nodes.find((n) => n.id === id);
+  const mobile = useIsMobile();
   if (!node) return null;
   const health = healthOf(node, arch, ws, broken);
 
   return (
-    <aside className="animate-pop absolute bottom-4 right-4 top-4 z-30 flex w-[400px] max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-2xl border border-line bg-card shadow-float">
-      <header className="border-b border-line px-4 pb-0 pt-4">
+    <>
+    {mobile && <div className="absolute inset-0 z-30 bg-ink/10" onClick={() => select(undefined)} />}
+    <aside
+      className={cn(
+        "animate-pop absolute z-30 flex flex-col overflow-hidden border border-line bg-card shadow-float",
+        mobile ? "inset-x-0 bottom-0 top-[18%] rounded-t-3xl pb-[env(safe-area-inset-bottom)]" : "bottom-4 right-4 top-4 w-[400px] max-w-[calc(100%-2rem)] rounded-2xl",
+      )}
+    >
+      {mobile && <button onClick={() => select(undefined)} className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-line-2" aria-label="Close" />}
+      <header className={cn("border-b border-line px-4 pb-0", mobile ? "pt-2" : "pt-4")}>
         <div className="flex items-start gap-3">
           <KindTile kind={node.kind} size={40} />
           <div className="min-w-0 flex-1">
@@ -45,8 +55,8 @@ export function Inspector() {
               <Dot health={health} /> {HEALTH[health].label}
             </div>
           </div>
-          <button onClick={() => select(undefined)} className="rounded-md p-1 text-mute hover:bg-sunk hover:text-ink" aria-label="Close">
-            <X size={15} />
+          <button onClick={() => select(undefined)} className="rounded-md p-1.5 text-mute hover:bg-sunk hover:text-ink" aria-label="Close">
+            <X size={mobile ? 18 : 15} />
           </button>
         </div>
         <nav className="mt-3 flex gap-4 text-[12.5px]">
@@ -54,7 +64,7 @@ export function Inspector() {
             <button
               key={t}
               onClick={() => setInspectorTab(t)}
-              className={cn("-mb-px border-b-[1.5px] pb-2 capitalize transition-colors", tab === t ? "border-ink font-medium text-ink" : "border-transparent text-mute hover:text-ink")}
+              className={cn("-mb-px border-b-[1.5px] pb-2.5 capitalize transition-colors md:pb-2", tab === t ? "border-ink font-medium text-ink" : "border-transparent text-mute hover:text-ink")}
             >
               {t}
               {t === "code" && node.files.length > 0 && <span className="ml-1 font-mono text-[10px] text-faint">{node.files.length}</span>}
@@ -69,8 +79,9 @@ export function Inspector() {
         {tab === "activity" && <Activity node={node} runs={runs} />}
       </div>
 
-      <Footer node={node} />
+      <Footer node={node} mobile={mobile} />
     </aside>
+    </>
   );
 }
 
@@ -228,22 +239,28 @@ function Activity({ node, runs }: { node: Component; runs: ReturnType<typeof use
   );
 }
 
-function Footer({ node }: { node: Component }) {
+function Footer({ node, mobile }: { node: Component; mobile: boolean }) {
   const setDraft = useStore((s) => s.setDraft);
+  const select = useStore((s) => s.select);
+  // On a phone the sheet covers the chat, so close it and hand over to the prompt.
+  const ask = (text: string) => {
+    setDraft(text, node.id);
+    if (mobile) select(undefined);
+  };
   return (
     <footer className="border-t border-line bg-paper/60 px-4 py-3">
       <div className="mb-2 flex flex-wrap gap-1.5">
         {SUGGEST[node.kind].map((s) => (
           <button
             key={s}
-            onClick={() => setDraft(s, node.id)}
-            className="rounded-full border border-line bg-card px-2.5 py-1 text-[11px] text-ink-2 transition-colors hover:border-ink hover:text-ink"
+            onClick={() => ask(s)}
+            className="rounded-full border border-line bg-card px-3 py-1.5 text-[12px] md:px-2.5 md:py-1 md:text-[11px] text-ink-2 transition-colors hover:border-ink hover:text-ink"
           >
             {s}
           </button>
         ))}
       </div>
-      <Button variant="primary" size="sm" className="w-full" onClick={() => setDraft("", node.id)}>
+      <Button variant="primary" size="sm" className="h-10 w-full text-[13px] md:h-7 md:text-xs" onClick={() => ask("")}>
         Ask the agent to change {node.label}
       </Button>
     </footer>

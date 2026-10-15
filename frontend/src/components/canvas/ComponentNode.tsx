@@ -10,10 +10,10 @@ import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/utils";
 
 export type Visual = { health: NodeHealth; selected: boolean; impact: boolean; source: boolean; dim: boolean; findings: number; fresh: boolean };
-export type FlowNode = Node<{ c: Component; v: Visual }, "component">;
+export type FlowNode = Node<{ c: Component; v: Visual; vertical?: boolean }, "component">;
 
 function ComponentNode({ data }: NodeProps<FlowNode>) {
-  const { c, v } = data;
+  const { c, v, vertical } = data;
   const { select, setImpactPreview, setDraft, setOpenFile } = useStore.getState();
   const fileCount = c.files.length;
   const sub =
@@ -43,7 +43,7 @@ function ComponentNode({ data }: NodeProps<FlowNode>) {
           c.files.length === 0 && c.kind !== "runtime" && c.kind !== "integration" && "border-dashed",
         )}
       >
-        <Handle type="target" position={Position.Left} />
+        <Handle type="target" position={vertical ? Position.Top : Position.Left} />
         <KindTile kind={c.kind} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
@@ -60,7 +60,7 @@ function ComponentNode({ data }: NodeProps<FlowNode>) {
             </span>
           )}
         </div>
-        <Handle type="source" position={Position.Right} />
+        <Handle type="source" position={vertical ? Position.Bottom : Position.Right} />
       </div>
 
       {v.impact && <div className="absolute -bottom-5 left-3 font-mono text-[10px] text-bad">would need updating</div>}

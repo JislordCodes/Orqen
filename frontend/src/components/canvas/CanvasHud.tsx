@@ -19,10 +19,10 @@ export function CanvasHud() {
   const impactNode = arch.nodes.find((n) => n.id === impactId);
 
   return (
-    <div className="pointer-events-none absolute left-4 top-4 z-10 flex flex-col gap-2">
+    <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-4.5rem)] flex-col gap-2 md:left-4 md:top-4 md:max-w-none">
       <div className="pointer-events-auto rounded-xl border border-line bg-card/90 px-3.5 py-2.5 shadow-card backdrop-blur">
-        <div className="text-[13px] font-semibold tracking-[-0.01em]">{project?.name}</div>
-        <div className="mt-1 flex items-center gap-3 font-mono text-[10.5px] text-mute">
+        <div className="hidden text-[13px] font-semibold tracking-[-0.01em] md:block">{project?.name}</div>
+        <div className="flex items-center gap-3 font-mono md:mt-1 text-[10.5px] text-mute">
           <span><b className="dot text-[13px] text-ink">{arch.nodes.length}</b> components</span>
           <span><b className="dot text-[13px] text-ink">{files}</b> files</span>
           {cp && (

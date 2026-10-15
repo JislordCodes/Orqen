@@ -20,17 +20,17 @@ export function TestsView() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl px-6 py-6">
-        <div className="grid grid-cols-4 gap-3">
+      <div className="mx-auto max-w-5xl px-3 py-4 md:px-6 md:py-6">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
           <Stat label="Last test run" value={latest ? (latest.exit === 0 ? "pass" : "fail") : "—"} tone={latest ? (latest.exit === 0 ? "ok" : "bad") : undefined} />
           <Stat label="Test runs passed" value={tests.length ? `${passing}/${tests.length}` : "0"} />
           <Stat label="Critical" value={String(crit)} tone={crit ? "bad" : "ok"} />
           <Stat label="Checks to review" value={String(findings.length - crit)} tone={findings.length - crit ? "warn" : undefined} />
         </div>
 
-        <div className="mt-6 grid grid-cols-[1.1fr_1fr] gap-4">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:mt-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
           <section className="rounded-2xl border border-line bg-card shadow-card">
-            <header className="flex items-center justify-between border-b border-line px-4 py-3">
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
               <div>
                 <h2 className="text-[13px] font-semibold">Guardrails</h2>
                 <p className="text-[11px] text-mute">Checked live against the graph after every step.</p>
@@ -70,12 +70,12 @@ export function TestsView() {
           </section>
 
           <section className="rounded-2xl border border-line bg-card shadow-card">
-            <header className="flex items-center justify-between border-b border-line px-4 py-3">
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
               <div>
                 <h2 className="text-[13px] font-semibold">Test runs</h2>
                 <p className="text-[11px] text-mute">Every test command the agent ran in the sandbox.</p>
               </div>
-              <div className="flex gap-1.5">
+              <div className="flex shrink-0 gap-1.5">
                 <Button size="sm" variant="secondary" disabled={!!liveRun || !arch.nodes.length} onClick={() => send("Run the full test suite. If anything fails, fix the code and re-run until it passes, then checkpoint.", { intent: "test" })}>
                   <Play size={11} /> Run
                 </Button>

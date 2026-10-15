@@ -34,7 +34,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-[100dvh] flex-col overflow-hidden">
       <TopBar />
       <main className="relative min-h-0 flex-1">
         {/* Canvas stays mounted so its viewport survives tab switches. */}
@@ -46,8 +46,8 @@ export default function App() {
           <ChatDock />
           <PreviewDrawer />
         </div>
-        {tab === "executions" && <div className="absolute inset-0"><ExecutionsView /></div>}
-        {tab === "tests" && <div className="absolute inset-0"><TestsView /></div>}
+        {tab === "executions" && <div className="absolute inset-0 z-10 bg-paper"><ExecutionsView /></div>}
+        {tab === "tests" && <div className="absolute inset-0 z-10 bg-paper"><TestsView /></div>}
       </main>
       <SettingsDialog />
       <NewProjectDialog />
