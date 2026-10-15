@@ -4,6 +4,9 @@
 # localhost.run sometimes drops a tunnel on its side while ssh stays connected (the URL then answers
 # "no tunnel"). A checker notices that and kills ssh so the loop reconnects.
 PORT="$1"
+# One loop per port: a second copy would fight the first over the URL file.
+exec 9>"/tmp/lr-${PORT}.lock"
+flock -n 9 || exit 0
 while true; do
   ( ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
       -R "80:localhost:${PORT}" "nokey@localhost.run" 2>&1 | while IFS= read -r line; do
@@ -14,7 +17,8 @@ while true; do
   sleep 20
   while kill -0 "$SUB" 2>/dev/null; do
     u=$(cat "/tmp/lr-${PORT}.url" 2>/dev/null)
-    if [ -n "$u" ] && curl -s -m 15 "$u" | head -c 200 | grep -q '^no tunnel'; then
+    # localhost.run also answers "no tunnel" when nothing listens locally, so only act when the port is up.
+    if [ -n "$u" ] && curl -s -m 5 -o /dev/null "http://localhost:${PORT}/" && curl -s -m 15 "$u" | head -c 200 | grep -q '^no tunnel'; then
       pkill -P "$SUB" 2>/dev/null; kill "$SUB" 2>/dev/null
       break
     fi
