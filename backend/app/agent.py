@@ -37,6 +37,8 @@ Testing rules:
 Preview rules (very important, this is how the user sees the app):
 - The app must listen on 0.0.0.0 port {preview_port}. Set host and port explicitly in code or in the start
   command (Flask: app.run(host="0.0.0.0", port={preview_port}); Vite: --host 0.0.0.0 --port {preview_port}).
+- The preview is opened through a public tunnel hostname, so never restrict hosts: for Vite set
+  server.allowedHosts: true (and preview.allowedHosts: true); for Next.js, Django etc. allow all hosts.
 - Start it with start_process using the name "web", and check it with read_process_logs.
 - Before finishing, make sure it is running on that port. Do not tell the user to open localhost; the user
   opens a preview link that is shown in their interface.

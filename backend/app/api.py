@@ -3,6 +3,7 @@
 Run with:  uvicorn app.api:app --host 0.0.0.0 --port 8000
 """
 import json
+import os
 import re
 import secrets
 import uuid
@@ -149,6 +150,12 @@ async def create_preview(
     body: PreviewRequest, request: Request, uid: str = Depends(current_user)
 ):
     """Returns a URL that shows the app running in the project's sandbox."""
+    direct = config.PREVIEW_URL
+    if not direct and config.PREVIEW_URL_FILE and os.path.exists(config.PREVIEW_URL_FILE):
+        direct = open(config.PREVIEW_URL_FILE).read().strip()
+    if direct and not config.PREVIEW_DOMAIN:
+        check_project(body.project_id)
+        return {"url": direct.rstrip("/") + "/", "expires_in": 60 * 60}
     if not config.PREVIEW_DOMAIN:
         raise HTTPException(501, "PREVIEW_DOMAIN is not configured on the server")
     project_id = check_project(body.project_id)

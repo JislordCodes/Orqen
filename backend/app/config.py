@@ -30,6 +30,11 @@ PREVIEW_PORT = int(os.getenv("PREVIEW_PORT", "3000"))
 # Wildcard domain whose subdomains all point at this server, e.g. "3.80.104.25.nip.io"
 # (nip.io resolves <anything>.3.80.104.25.nip.io to 3.80.104.25) or "preview.yourdomain.com".
 PREVIEW_DOMAIN = os.getenv("PREVIEW_DOMAIN", "")
+# Simpler alternative for single-host demos: a public tunnel (localhost.run, ngrok...) pointed straight at
+# PREVIEW_PORT. Put its URL in PREVIEW_URL, or in the file named by PREVIEW_URL_FILE (read on every request,
+# so a restarted tunnel with a new URL needs no API restart).
+PREVIEW_URL = os.getenv("PREVIEW_URL", "")
+PREVIEW_URL_FILE = os.getenv("PREVIEW_URL_FILE", "")
 
 # Where Strands stores conversation history. Use a shared disk (or S3SessionManager)
 # if you run workers on more than one machine.
