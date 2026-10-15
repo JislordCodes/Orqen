@@ -159,7 +159,7 @@ async def create_preview(
         check_project(body.project_id)
         # Sandboxes share the host network here, so the app (if any) listens on localhost.
         try:
-            async with httpx.AsyncClient(timeout=3) as c:
+            async with httpx.AsyncClient(timeout=3, trust_env=False) as c:
                 await c.get(f"http://127.0.0.1:{config.PREVIEW_PORT}/")
         except httpx.HTTPError:
             raise HTTPException(409, f"Nothing is running on port {config.PREVIEW_PORT} yet. Ask the agent to start the app.")
