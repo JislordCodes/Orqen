@@ -16,7 +16,7 @@ fi
 docker image inspect appbuilder-sandbox:latest >/dev/null 2>&1 || docker build -q --network host -t appbuilder-sandbox:latest "$ROOT/backend/sandbox_image" >/tmp/build.log 2>&1
 cd "$ROOT/backend"
 curl -s -m2 localhost:8000/health >/dev/null || (SANDBOX_NETWORK=host PREVIEW_URL_FILE=/tmp/lr-3000.url setsid nohup .venv/bin/uvicorn app.api:app --port 8000 >/tmp/api.log 2>&1 &)
-ps aux | grep -q "[a]pp.worker" || (SANDBOX_NETWORK=host BASE_URL=https://api.studio.nebius.com/v1/ MODEL_ID=${MODEL_ID:-moonshotai/Kimi-K2.7-Code} setsid nohup .venv/bin/python -m app.worker >/tmp/worker.log 2>&1 &)
+ps aux | grep -q "[a]pp.worker" || (MAX_TOOL_CALLS=${MAX_TOOL_CALLS:-200} SANDBOX_NETWORK=host BASE_URL=https://api.studio.nebius.com/v1/ MODEL_ID=${MODEL_ID:-moonshotai/Kimi-K2.7-Code} setsid nohup .venv/bin/python -m app.worker >/tmp/worker.log 2>&1 &)
 cd "$ROOT/frontend"
 curl -s -m2 -o /dev/null localhost:4173/ || (setsid nohup npx vite preview --host 0.0.0.0 --port 4173 >/tmp/vite.log 2>&1 &)
 # localhost.run tunnels (they stream SSE live; Cloudflare quick tunnels buffer it). App on 4173, preview on 3000.
