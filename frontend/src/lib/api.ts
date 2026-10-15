@@ -110,8 +110,15 @@ export const api = {
     let failures = 0;
     es.onerror = () => {
       if (finished) return;
+      // The browser gives up for good on a non-200 answer (404: the server no longer knows this run,
+      // e.g. it restarted; 502: the tunnel is gone). Retrying can't help, so end the run now.
+      if (es.readyState === EventSource.CLOSED) {
+        finished = true;
+        onFail("The server lost this run (it restarted or the link changed). Send the prompt again.");
+        return;
+      }
       failures += 1;
-      if (failures > 5) {
+      if (failures > 8) {
         es.close();
         onFail("Lost the event stream. The run may still be going on the server.");
       }
