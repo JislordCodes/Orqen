@@ -32,7 +32,12 @@ def run_job(job: dict) -> None:
     finally:
         # Release the per-project lock, but only if it is still ours.
         key = config.lock_key(ctx.sandbox_id)
-        if r.get(key) == ctx.run_id:
+        # get_redis() returns bytes, so decode before comparing (otherwise the lock is
+        # never released and the project stays blocked with HTTP 409 for an hour).
+        held = r.get(key)
+        if isinstance(held, bytes):
+            held = held.decode()
+        if held == ctx.run_id:
             r.delete(key)
 
 
