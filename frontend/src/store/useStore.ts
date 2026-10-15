@@ -121,12 +121,33 @@ export const useStore = create<State>()(
         }
       };
 
-      const subscribe = (projectId: string, runId: string) => {
+      // Public tunnels drop long SSE connections now and then. The server keeps every event in a
+      // Redis Stream, so on a drop we open a fresh stream (it replays from the start) and rebuild.
+      const subscribe = (projectId: string, runId: string, attempt = 0) => {
         const { conn } = get();
-        const stop = api.streamRun(conn, runId, onEvent(projectId, runId), (msg) => {
-          get().toast(msg, "error");
-          patchRun(projectId, runId, (r) => ({ ...r, status: "error", error: msg, endedAt: Date.now() }));
-        });
+        const stop = api.streamRun(
+          conn,
+          runId,
+          (e, id) => {
+            attempt = 0; // events are flowing again
+            onEvent(projectId, runId)(e, id);
+          },
+          (msg) => {
+            streams.delete(runId);
+            if (attempt < 10) {
+              const t = setTimeout(() => {
+                if (streams.get(runId) !== retryStop) return; // cancelled meanwhile
+                patchRun(projectId, runId, (r) => ({ ...r, events: [], status: "running", error: undefined }));
+                subscribe(projectId, runId, attempt + 1);
+              }, 2000 + attempt * 1000);
+              const retryStop = () => clearTimeout(t);
+              streams.set(runId, retryStop);
+              return;
+            }
+            get().toast(msg, "error");
+            patchRun(projectId, runId, (r) => ({ ...r, status: "error", error: msg, endedAt: Date.now() }));
+          },
+        );
         streams.set(runId, stop);
       };
 
@@ -316,7 +337,7 @@ export const useStore = create<State>()(
           for (const [projectId, runs] of Object.entries(s.runs)) {
             for (const r of runs) {
               // Runs cut off by a connection blip (error with no message) are reattached too.
-              const blipped = r.status === "error" && !r.error;
+              const blipped = r.status === "error" && (!r.error || /^(Lost the event stream|The server lost this run)/.test(r.error));
               if (r.status !== "running" && r.status !== "queued" && !blipped) continue;
               if (streams.has(r.id)) continue;
               if (s.mode === "live" && !r.id.includes("-") && r.id.length === 32) {
