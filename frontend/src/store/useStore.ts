@@ -89,7 +89,7 @@ export const useStore = create<State>()(
           const next: Run = { ...r, events: [...r.events, { ...e, id: id || `${r.events.length}`, at: Date.now() } as Run["events"][number]] };
           if (e.type === "status") next.status = "running";
           if (e.type === "done") Object.assign(next, { status: "done", summary: e.data.summary, endedAt: Date.now() });
-          if (e.type === "error") Object.assign(next, { status: "error", error: e.data.message, endedAt: Date.now() });
+          if (e.type === "error") Object.assign(next, { status: "error", error: e.data.message || "Run failed", endedAt: Date.now() });
           return next;
         });
         // Capture complete file text from view_file results so the code view can show it.
@@ -315,10 +315,12 @@ export const useStore = create<State>()(
           const s = get();
           for (const [projectId, runs] of Object.entries(s.runs)) {
             for (const r of runs) {
-              if (r.status !== "running" && r.status !== "queued") continue;
+              // Runs cut off by a connection blip (error with no message) are reattached too.
+              const blipped = r.status === "error" && !r.error;
+              if (r.status !== "running" && r.status !== "queued" && !blipped) continue;
               if (streams.has(r.id)) continue;
               if (s.mode === "live" && !r.id.includes("-") && r.id.length === 32) {
-                patchRun(projectId, r.id, (x) => ({ ...x, events: [] })); // replay rebuilds them
+                patchRun(projectId, r.id, (x) => ({ ...x, events: [], status: "running", error: undefined, endedAt: undefined })); // replay rebuilds them
                 subscribe(projectId, r.id);
               } else {
                 patchRun(projectId, r.id, (x) => ({ ...x, status: "error", error: "Interrupted by a page reload", endedAt: Date.now() }));

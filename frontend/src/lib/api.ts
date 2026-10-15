@@ -91,6 +91,9 @@ export const api = {
     for (const t of types) {
       es.addEventListener(t, (msg) => {
         const m = msg as MessageEvent;
+        // EventSource fires its own "error" Event on connection hiccups (no data). Only
+        // server-sent events carry data; ignore the rest so a blip doesn't end the run.
+        if (typeof m.data !== "string") return;
         let data: unknown = {};
         try {
           data = JSON.parse(m.data);
