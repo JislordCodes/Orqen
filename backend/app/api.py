@@ -4,6 +4,8 @@ Run with:  uvicorn app.api:app --host 0.0.0.0 --port 8000
 """
 import json
 import os
+
+import httpx
 import re
 import secrets
 import uuid
@@ -155,6 +157,12 @@ async def create_preview(
         direct = open(config.PREVIEW_URL_FILE).read().strip()
     if direct and not config.PREVIEW_DOMAIN:
         check_project(body.project_id)
+        # Sandboxes share the host network here, so the app (if any) listens on localhost.
+        try:
+            async with httpx.AsyncClient(timeout=3) as c:
+                await c.get(f"http://127.0.0.1:{config.PREVIEW_PORT}/")
+        except httpx.HTTPError:
+            raise HTTPException(409, f"Nothing is running on port {config.PREVIEW_PORT} yet. Ask the agent to start the app.")
         return {"url": direct.rstrip("/") + "/", "expires_in": 60 * 60}
     if not config.PREVIEW_DOMAIN:
         raise HTTPException(501, "PREVIEW_DOMAIN is not configured on the server")
