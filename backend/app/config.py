@@ -22,7 +22,7 @@ SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "appbuilder-sandbox:latest")
 # "bridge" lets npm/pip install work in dev. In production use an egress proxy
 # that only allows package registries, or "none" if you pre-bake dependencies.
 SANDBOX_NETWORK = os.getenv("SANDBOX_NETWORK", "bridge")
-SANDBOX_MEM = os.getenv("SANDBOX_MEM", "1g")
+SANDBOX_MEM = os.getenv("SANDBOX_MEM", "3g")
 SANDBOX_CPUS = float(os.getenv("SANDBOX_CPUS", "1.0"))
 
 # Worker limits

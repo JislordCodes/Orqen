@@ -7,11 +7,16 @@ them to the model as the tool descriptions.
 import json
 import re
 import shlex
+import threading
 
 from strands import tool
 
 from . import config, harness, sandbox
 from .events import RunContext
+
+# The model often calls several tools in one turn and Strands runs them concurrently, so the
+# read-modify-write of features.json must be serialised or marks overwrite each other.
+_features_lock = threading.Lock()
 
 MAX_OUT = 6000  # characters returned to the model per tool call
 
@@ -354,6 +359,7 @@ def build_tools(ctx: RunContext, role: str = "builder") -> list:
             code, out = sandbox.sh(uid, f"bash {harness.CHECKS}", timeout=300)
             ok = code == 0
             ctx.checks_green = ok
+            ctx.passes_since_checks = 0
             if ok:
                 ctx.dirty = False
             ctx.emit("checks", {"ok": ok, "output": out[-1500:]})
@@ -373,6 +379,7 @@ def build_tools(ctx: RunContext, role: str = "builder") -> list:
         """
 
         def go():
+          with _features_lock:
             feats = harness.read_features(uid) or []
             match = next((f for f in feats if f.get("id") == feature_id), None)
             if not match:
@@ -381,10 +388,15 @@ def build_tools(ctx: RunContext, role: str = "builder") -> list:
                 return "ERROR: files changed since the last green run_checks (or it never passed). Run run_checks first."
             if passes and len(evidence.strip()) < 20:
                 return "ERROR: give real evidence: what you ran against the app and what it returned."
+            if passes and ctx.passes_since_checks >= 1:
+                return ("ERROR: one feature per green run_checks. Verify this feature on its own against the "
+                        "running app, run run_checks again, then mark it.")
             was = bool(match.get("passes"))
             match["passes"] = bool(passes)
             match["evidence"] = evidence[:1000]
             harness.write_features(uid, feats)
+            if passes:
+                ctx.passes_since_checks += 1
             if passes and not was:
                 ctx.features_passed += 1
             ctx.emit("features", harness.feature_summary(feats))
@@ -406,6 +418,7 @@ def build_tools(ctx: RunContext, role: str = "builder") -> list:
         """
 
         def go():
+          with _features_lock:
             feats = harness.read_features(uid) or []
             nums = [int(f["id"][1:]) for f in feats if str(f.get("id", "")).startswith("F") and str(f["id"])[1:].isdigit()]
             fid = f"F{(max(nums) if nums else 0) + 1}"

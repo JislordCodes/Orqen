@@ -27,6 +27,7 @@ class RunContext:
         # Harness state (see harness.py / tools.py)
         self.dirty = False          # files edited since the last green run_checks
         self.checks_green = False   # last run_checks passed
+        self.passes_since_checks = 0  # features marked passing since the last green run_checks
         self.edits = 0              # number of successful edits (resets the loop breaker)
         self.features_passed = 0    # features flipped to passing in the current session
         self.plan_state = ""        # planner: "submitted" | "questions"
