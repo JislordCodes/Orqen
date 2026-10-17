@@ -1,5 +1,8 @@
 """Builds the Strands agents for a run: a PLANNER or a BUILDER (see harness.py).
 The model, the system prompt, the tools, context management and streaming live here."""
+import os
+import time
+
 from strands import Agent
 from strands.agent.conversation_manager import SummarizingConversationManager
 from strands.models.openai import OpenAIModel
@@ -49,11 +52,25 @@ def build_agent(ctx: RunContext, role: str = "builder") -> Agent:
     if model_id:
         model.update_config(model_id=model_id)
 
-    return Agent(
-        model=model,
-        system_prompt=prompt.format(preview_port=config.PREVIEW_PORT),
-        tools=build_tools(ctx, role),
-        callback_handler=on_event,
-        session_manager=session_manager,
-        conversation_manager=conversation_manager,
-    )
+    def make(sm):
+        return Agent(
+            model=model,
+            system_prompt=prompt.format(preview_port=config.PREVIEW_PORT),
+            tools=build_tools(ctx, role),
+            callback_handler=on_event,
+            session_manager=sm,
+            conversation_manager=conversation_manager,
+        )
+
+    try:
+        return make(session_manager)
+    except ValueError as e:
+        # A session saved by a different conversation manager (projects from before the
+        # harness used a sliding window) can't be restored. Keep it aside and start fresh:
+        # the plan files and progress.md in the workspace carry the project's state.
+        if "conversation manager state" not in str(e):
+            raise
+        old = os.path.join(config.SESSIONS_DIR, f"session_{session_id}")
+        if os.path.isdir(old):
+            os.replace(old, f"{old}.stale-{int(time.time())}")
+        return make(FileSessionManager(session_id=session_id, storage_dir=config.SESSIONS_DIR))
