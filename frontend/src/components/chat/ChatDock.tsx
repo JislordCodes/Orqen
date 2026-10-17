@@ -10,6 +10,8 @@ import { KindIcon } from "@/lib/kinds";
 import { cn, duration } from "@/lib/utils";
 import { Markdownish } from "./Markdownish";
 import { StepRow } from "./StepRow";
+import { BuildProgress, PlanCard } from "./PlanCard";
+import { planOf, type ProjectPlan } from "@/lib/plan";
 import { Kbd } from "@/components/ui/misc";
 
 /**
@@ -64,15 +66,17 @@ export function ChatDock() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [draft]);
 
+  const plan = useMemo(() => planOf(runs), [runs]);
+  const needsUser = !!plan && plan.awaiting && !plan.approved; // a plan or questions wait for the user
   // Open the thread while the agent works; fold it away shortly after it finishes so the graph is the hero.
   const wasLive = useRef(!!liveRun);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | undefined;
     if (liveRun && !wasLive.current) setChatOpen(true);
-    if (!liveRun && wasLive.current) t = setTimeout(() => setChatOpen(false), mobile ? 1200 : 2500);
+    if (!liveRun && wasLive.current && !needsUser) t = setTimeout(() => setChatOpen(false), mobile ? 1200 : 2500);
     wasLive.current = !!liveRun;
     return () => clearTimeout(t);
-  }, [liveRun, mobile, setChatOpen]);
+  }, [liveRun, mobile, setChatOpen, needsUser]);
 
   const submit = () => {
     const text = draft.trim();
@@ -111,7 +115,7 @@ export function ChatDock() {
               </button>
             </div>
             <div ref={scroller} className={cn("space-y-5 overflow-y-auto overscroll-contain px-4 py-4", mobile ? "max-h-[40dvh]" : "max-h-[42vh]")}>
-              {recent.map((r) => <RunThread key={r.id} run={r} />)}
+              {recent.map((r) => <RunThread key={r.id} run={r} plan={plan} busy={!!liveRun} />)}
             </div>
           </div>
         )}
@@ -184,8 +188,17 @@ export function ChatDock() {
   );
 }
 
-function RunThread({ run }: { run: Run }) {
+function RunThread({ run, plan, busy }: { run: Run; plan?: ProjectPlan; busy: boolean }) {
   const items = useMemo(() => timelineOf(run), [run]);
+  const harness = useMemo(() => {
+    let planEv, features, phase;
+    for (const e of run.events) {
+      if (e.type === "plan") planEv = e.data;
+      else if (e.type === "features") features = e.data;
+      else if (e.type === "phase") phase = e.data;
+    }
+    return { planEv, features, phase };
+  }, [run]);
   const live = run.status === "running" || run.status === "queued";
   const grouped = useMemo(() => groupSteps(items), [items]);
   return (
@@ -204,6 +217,10 @@ function RunThread({ run }: { run: Run }) {
           ) : (
             <StepGroup key={g.steps[0].id} steps={g.steps} live={live && i === grouped.length - 1} />
           ),
+        )}
+        {harness.planEv && <PlanCard data={harness.planEv} plan={plan} busy={busy} />}
+        {!harness.planEv && harness.features && harness.features.total > 0 && (
+          <BuildProgress data={harness.features} session={harness.phase?.session} maxSessions={harness.phase?.max_sessions} />
         )}
         {run.status === "error" && <p className="rounded-lg bg-bad-soft px-3 py-2 text-[12px] text-bad">{run.error}</p>}
         {run.status === "done" && run.endedAt && (

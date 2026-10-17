@@ -24,6 +24,12 @@ class RunContext:
         self.project_id = project_id
         self.r = r
         self.tool_calls = 0
+        # Harness state (see harness.py / tools.py)
+        self.dirty = False          # files edited since the last green run_checks
+        self.checks_green = False   # last run_checks passed
+        self.edits = 0              # number of successful edits (resets the loop breaker)
+        self.features_passed = 0    # features flipped to passing in the current session
+        self.plan_state = ""        # planner: "submitted" | "questions"
         self._buf = ""
         # Strands may run several tools concurrently in threads, so guard shared state.
         self._lock = threading.Lock()
@@ -40,6 +46,12 @@ class RunContext:
             maxlen=5000,
             approximate=True,
         )
+
+    def new_session(self) -> None:
+        """Called by the worker before each builder session: fresh tool budget and progress count."""
+        with self._lock:
+            self.tool_calls = 0
+            self.features_passed = 0
 
     def next_tool_call(self) -> int:
         with self._lock:

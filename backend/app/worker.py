@@ -8,7 +8,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config
+from . import config, harness
 from .agent import build_agent
 from .events import RunContext, get_redis
 
@@ -16,15 +16,59 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("worker")
 
 
+def _choose_mode(job: dict, ctx: RunContext) -> str:
+    """plan | build. "auto" plans a project that has no plan yet, otherwise builds."""
+    mode = job.get("mode", "auto")
+    if mode in ("plan", "build"):
+        return mode
+    return "build" if harness.has_plan(ctx.sandbox_id) else "plan"
+
+
+def run_plan(job: dict, ctx: RunContext) -> None:
+    ctx.emit("phase", {"phase": "planning"})
+    agent = build_agent(ctx, "planner")
+    result = agent(job["prompt"])
+    ctx.flush_text()
+    state = ctx.plan_state or "no_plan"
+    ctx.emit("done", {"summary": str(result)[:2000], "state": "awaiting_approval" if state == "submitted" else state})
+
+
+def run_build(job: dict, ctx: RunContext) -> None:
+    """Feature-by-feature build across as many sessions as it takes (up to MAX_SESSIONS).
+    A session that flips no feature to passing ends the run, so it never spins."""
+    agent = build_agent(ctx, "builder")
+    prompt = job["prompt"]
+    result = None
+    for session in range(1, config.MAX_SESSIONS + 1):
+        ctx.new_session()
+        ctx.emit("phase", {"phase": "building", "session": session, "max_sessions": config.MAX_SESSIONS})
+        result = agent(prompt)
+        ctx.flush_text()
+        feats = harness.read_features(ctx.sandbox_id)
+        if not feats:
+            break  # chat-style run on a project without a plan
+        todo = harness.failing(feats)
+        ctx.emit("features", harness.feature_summary(feats))
+        if not todo or ctx.features_passed == 0:
+            break
+        prompt = (
+            f"Continue with the next session. {len(feats) - len(todo)}/{len(feats)} features pass. "
+            f"Next failing: {todo[0]['id']} {todo[0].get('title', '')}. Read .orqen/progress.md, then keep going."
+        )
+    feats = harness.read_features(ctx.sandbox_id) or []
+    summary = harness.feature_summary(feats) if feats else {}
+    ctx.emit("done", {"summary": str(result)[:2000], "state": "built", **({"passing": summary["passing"], "total": summary["total"]} if feats else {})})
+
+
 def run_job(job: dict) -> None:
     r = get_redis()
     ctx = RunContext(job["run_id"], job["user_id"], job.get("project_id", "main"), r)
     try:
         ctx.emit("status", {"state": "started"})
-        agent = build_agent(ctx)
-        result = agent(job["prompt"])  # blocking: runs the whole agent loop
-        ctx.flush_text()
-        ctx.emit("done", {"summary": str(result)[:2000]})
+        if _choose_mode(job, ctx) == "plan":
+            run_plan(job, ctx)
+        else:
+            run_build(job, ctx)
     except Exception as e:  # noqa: BLE001
         log.exception("run %s failed", job.get("run_id"))
         ctx.flush_text()

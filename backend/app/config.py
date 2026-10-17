@@ -12,6 +12,10 @@ NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 MODEL_ID = os.getenv("MODEL_ID", "")
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "8192"))
+# Context window of MODEL_ID in tokens; drives proactive summarisation (agent.py).
+CONTEXT_WINDOW = int(os.getenv("CONTEXT_WINDOW", "131072"))
+# Optional stronger reasoning model for the planner (e.g. moonshotai/Kimi-K3). Empty = MODEL_ID.
+PLANNER_MODEL_ID = os.getenv("PLANNER_MODEL_ID", "")
 
 # Sandbox (one Docker container + one volume per user)
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "appbuilder-sandbox:latest")
@@ -23,7 +27,10 @@ SANDBOX_CPUS = float(os.getenv("SANDBOX_CPUS", "1.0"))
 
 # Worker limits
 MAX_CONCURRENT_RUNS = int(os.getenv("MAX_CONCURRENT_RUNS", "4"))
-MAX_TOOL_CALLS = int(os.getenv("MAX_TOOL_CALLS", "80"))  # hard budget per run
+MAX_TOOL_CALLS = int(os.getenv("MAX_TOOL_CALLS", "80"))  # hard budget per session
+# A build run keeps starting fresh sessions while features are failing and the last
+# session made progress, up to this many sessions (each with MAX_TOOL_CALLS).
+MAX_SESSIONS = int(os.getenv("MAX_SESSIONS", "6"))
 
 # Preview: the user's dev server must listen on 0.0.0.0:PREVIEW_PORT inside the sandbox.
 PREVIEW_PORT = int(os.getenv("PREVIEW_PORT", "3000"))

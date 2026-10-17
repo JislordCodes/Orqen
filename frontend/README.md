@@ -109,3 +109,10 @@ src/
 - Code is read-only on purpose. Changes go through the agent, so the graph and the checkpoints stay true.
 - There's no cancel button, because the API has no cancel route yet.
 - Monaco loads from a CDN on first open. Bundle it locally if demo-day Wi-Fi is weak.
+
+## Build harness, phase 1 (backend/app/harness.py)
+- **Plan, approve, build.** POST /runs takes `mode`: `auto` (the default) plans a project with no plan and builds one that has a plan; `plan` revises the plan; `build` builds it. The planner writes `.orqen/spec.md`, `.orqen/architecture.json` and `.orqen/features.json`, then emits a `plan` event, and the run ends with `done.state = "awaiting_approval"`. While a plan waits, the UI shows a PlanCard (Approve and build, or type changes, which re-plans) with a Simple/Technical toggle.
+- **One feature at a time.** The builder tools are `list_features`, `run_checks` (`.orqen/checks.sh`: typecheck, lint and tests), `mark_feature` (refused unless the checks are green and nothing was edited since), `add_feature` and `update_progress`. The builder can't edit features.json directly.
+- **Gates and breaker.** Any identical call that fails 3 times with no edit in between is refused with BLOCKED.
+- **Long runs.** The worker runs builder sessions until every feature passes, a session makes no progress, or MAX_SESSIONS (6) is reached. SummarizingConversationManager compresses context at 70% (CONTEXT_WINDOW, default 131072). Optional: PLANNER_MODEL_ID. max_tokens now goes through `params` (fixes the Strands rejection).
+- New events: `phase`, `plan`, `features`, `checks`.

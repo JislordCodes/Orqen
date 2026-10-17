@@ -92,14 +92,14 @@ export function buildWorkspace(runs: Run[], liveRunId?: string): Workspace {
       switch (ev.data.name) {
         case "create_file": {
           const p = normalizePath(input.path);
-          if (!p) break;
+          if (!p || p.startsWith(".orqen/")) break; // harness plan files are not part of the system
           if (failed) touch(p, run, ev.at, { error: out });
           else touch(p, run, ev.at, { chars: Number(input.chars) || undefined, edits: (ws.files[p]?.edits ?? 0) + 1, content: undefined });
           break;
         }
         case "str_replace": {
           const p = normalizePath(input.path);
-          if (!p) break;
+          if (!p || p.startsWith(".orqen/")) break; // harness plan files are not part of the system
           if (failed) touch(p, run, ev.at, { error: out });
           else touch(p, run, ev.at, { edits: (ws.files[p]?.edits ?? 0) + 1, content: undefined });
           break;
@@ -193,7 +193,7 @@ export function stepsOf(run: Run): Step[] {
       s.output = ev.data.output;
       s.endAt = ev.at;
       const exit = parseExit(ev.data.output);
-      s.state = ev.data.output.startsWith("ERROR") || ev.data.output.startsWith("STOP") || (exit !== undefined && exit !== 0) ? "fail" : "ok";
+      s.state = ev.data.output.startsWith("ERROR") || ev.data.output.startsWith("STOP") || ev.data.output.startsWith("BLOCKED") || ev.data.output.startsWith("FAIL") || (exit !== undefined && exit !== 0) ? "fail" : "ok";
     }
   }
   if (run.status !== "running") steps.forEach((s) => s.state === "running" && (s.state = "fail"));
@@ -213,6 +213,12 @@ function describe(tool: string, i: Record<string, unknown>): string {
     case "read_process_logs": return `Checked ${String(i.name ?? "process")} logs`;
     case "stop_process": return `Stopped ${String(i.name ?? "process")}`;
     case "checkpoint": return `Checkpoint · ${String(i.message ?? "")}`;
+    case "submit_plan": return "Sent the plan for your approval";
+    case "list_features": return "Checked the feature list";
+    case "run_checks": return "Ran the quality gates";
+    case "mark_feature": return `${i.passes ? "Verified" : "Flagged"} ${String(i.id ?? "feature")}`;
+    case "add_feature": return `Added feature · ${String(i.title ?? "")}`;
+    case "update_progress": return "Wrote hand-off notes";
     default: return tool;
   }
 }

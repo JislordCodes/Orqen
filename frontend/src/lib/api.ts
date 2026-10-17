@@ -1,9 +1,10 @@
-import type { ServerEvent } from "./types";
+import type { RunMode, ServerEvent } from "./types";
 
 /**
  * Client for backend/app/api.py. Only these routes exist today:
  *   GET  /health
- *   POST /runs                 { prompt, project_id }   -> { run_id, project_id }   (409 if a run is active)
+ *   POST /runs                 { prompt, project_id, mode }   -> { run_id, project_id }   (409 if a run is active)
+ *                              mode: auto (plan new projects, build planned ones) | plan | build
  *   GET  /runs/{id}/events     SSE: status | text | tool_start | tool_result | done | error
  *   POST /preview              { project_id }           -> { url, expires_in }      (501 if no PREVIEW_DOMAIN)
  * Optional (see README "Optional backend endpoints"): file tree + file content for the code view.
@@ -45,10 +46,10 @@ async function call<T>(c: Connection, path: string, init?: RequestInit): Promise
 export const api = {
   health: (c: Connection) => call<{ ok: boolean }>(c, "/health"),
 
-  startRun: (c: Connection, prompt: string, projectId: string) =>
+  startRun: (c: Connection, prompt: string, projectId: string, mode: RunMode = "auto") =>
     call<{ run_id: string; project_id: string }>(c, "/runs", {
       method: "POST",
-      body: JSON.stringify({ prompt, project_id: projectId }),
+      body: JSON.stringify({ prompt, project_id: projectId, mode }),
     }),
 
   preview: (c: Connection, projectId: string) =>
@@ -87,7 +88,7 @@ export const api = {
     const url = `${c.baseUrl.replace(/\/$/, "")}/runs/${runId}/events?user_id=${encodeURIComponent(c.userId)}`;
     const es = new EventSource(url);
     let finished = false;
-    const types = ["status", "text", "tool_start", "tool_result", "done", "error"] as const;
+    const types = ["status", "text", "tool_start", "tool_result", "done", "error", "phase", "plan", "features", "checks"] as const;
     for (const t of types) {
       es.addEventListener(t, (msg) => {
         const m = msg as MessageEvent;

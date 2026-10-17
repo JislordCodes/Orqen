@@ -6,8 +6,47 @@ export type ServerEvent =
   | { type: "text"; data: { text: string } }
   | { type: "tool_start"; data: { name: ToolName | string; input: Record<string, unknown> } }
   | { type: "tool_result"; data: { name: ToolName | string; output: string } }
-  | { type: "done"; data: { summary: string } }
-  | { type: "error"; data: { message: string } };
+  | { type: "done"; data: { summary: string; state?: "awaiting_approval" | "questions" | "no_plan" | "built"; passing?: number; total?: number } }
+  | { type: "error"; data: { message: string } }
+  /* Harness (backend/app/harness.py) */
+  | { type: "phase"; data: { phase: "planning" | "building"; session?: number; max_sessions?: number } }
+  | { type: "plan"; data: PlanPayload }
+  | { type: "features"; data: FeatureSummary }
+  | { type: "checks"; data: { ok: boolean; output: string } };
+
+export interface PlanFeature {
+  id: string;
+  title: string;
+  plain?: string;
+  category?: string;
+  passes: boolean;
+  evidence?: string;
+}
+export interface FeatureSummary {
+  total: number;
+  passing: number;
+  features: PlanFeature[];
+}
+export interface PlanComponent {
+  id: string;
+  name?: string;
+  kind?: string;
+  tech?: string;
+  responsibility?: string;
+  plain?: string;
+}
+export interface PlanPayload extends FeatureSummary {
+  summary: string;
+  questions: string[];
+  spec?: string;
+  architecture?: {
+    stack?: Record<string, string>;
+    components?: PlanComponent[];
+    connections?: { from: string; to: string; label?: string }[];
+    principles?: string[];
+  } | null;
+}
+export type RunMode = "auto" | "plan" | "build";
 
 /** The ten tools in backend/app/tools.py */
 export type ToolName =
@@ -20,7 +59,13 @@ export type ToolName =
   | "start_process"
   | "read_process_logs"
   | "stop_process"
-  | "checkpoint";
+  | "checkpoint"
+  | "submit_plan"
+  | "list_features"
+  | "run_checks"
+  | "mark_feature"
+  | "add_feature"
+  | "update_progress";
 
 /** A server event as we keep it: with the SSE id and the time we received it. */
 export type RunEvent = ServerEvent & { id: string; at: number };
@@ -35,6 +80,8 @@ export interface Run {
   scope?: { nodeId: string; label: string; files: string[]; impacted: string[] };
   /** What kind of run this was, for the Executions list. */
   intent: "build" | "scoped" | "fix" | "audit" | "test";
+  /** Harness mode the run was started with. */
+  mode?: RunMode;
   status: RunStatus;
   events: RunEvent[];
   startedAt: number;

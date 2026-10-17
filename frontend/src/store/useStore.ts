@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { api, ApiError, type Connection } from "@/lib/api";
 import { buildArchitecture, dependentsOf, scopedPrompt } from "@/lib/architecture";
 import { buildWorkspace } from "@/lib/workspace";
+import { modeForPrompt } from "@/lib/plan";
 import type { Project, Run, ServerEvent } from "@/lib/types";
 import { slugify, uid } from "@/lib/utils";
 import { runDemo } from "@/demo/engine";
@@ -58,7 +59,9 @@ interface State {
   selectRun: (id?: string) => void;
   setChatOpen: (o: boolean) => void;
   setDraft: (text: string, scopeNodeId?: string | null) => void;
-  send: (request: string, opts?: { scopeNodeId?: string; intent?: Run["intent"] }) => Promise<void>;
+  send: (request: string, opts?: { scopeNodeId?: string; intent?: Run["intent"]; mode?: Run["mode"] }) => Promise<void>;
+  /** Approve the plan on screen: starts the feature-by-feature build. */
+  approvePlan: () => Promise<void>;
   openPreview: () => Promise<void>;
   closePreview: () => void;
   loadFile: (path: string) => Promise<void>;
@@ -111,6 +114,8 @@ export const useStore = create<State>()(
             });
           }
         }
+        // A plan or the planner's questions need the user: keep the thread open so they see it.
+        if (e.type === "plan") set({ chatOpen: true });
         if (e.type === "done" || e.type === "error") {
           streams.delete(runId);
           const s = get();
@@ -232,12 +237,14 @@ export const useStore = create<State>()(
           const prompt = node ? scopedPrompt(node, request, arch) : request;
           const impacted = node ? dependentsOf(node.id, arch.wires) : [];
           const intent: Run["intent"] = opts.intent ?? (node ? "scoped" : "build");
+          const mode: Run["mode"] = opts.mode ?? modeForPrompt(runs);
 
           const draft: Omit<Run, "id"> = {
             projectId,
             prompt: request,
             scope: node ? { nodeId: node.id, label: node.label, files: node.files, impacted } : undefined,
             intent,
+            mode,
             status: "queued",
             events: [],
             startedAt: Date.now(),
@@ -247,7 +254,7 @@ export const useStore = create<State>()(
             const id = uid();
             set((st) => ({ runs: { ...st.runs, [projectId]: [...(st.runs[projectId] ?? []), { ...draft, id }] }, chatOpen: true }));
             const stop = runDemo(
-              { prompt: request, scopeNodeId: node?.id, scopeFiles: node?.files ?? [], files: get().contents[projectId] ?? {} },
+              { prompt: request, scopeNodeId: node?.id, scopeFiles: node?.files ?? [], files: get().contents[projectId] ?? {}, mode },
               onEvent(projectId, id),
               (path, content) => set((st) => ({ contents: { ...st.contents, [projectId]: { ...(st.contents[projectId] ?? {}), [path]: content } } })),
             );
@@ -256,7 +263,7 @@ export const useStore = create<State>()(
           }
 
           try {
-            const { run_id } = await api.startRun(s.conn, prompt, projectId);
+            const { run_id } = await api.startRun(s.conn, prompt, projectId, mode);
             set((st) => ({ runs: { ...st.runs, [projectId]: [...(st.runs[projectId] ?? []), { ...draft, id: run_id }] }, chatOpen: true, health: "ok" }));
             subscribe(projectId, run_id);
           } catch (e) {
@@ -268,6 +275,8 @@ export const useStore = create<State>()(
             } else s.toast(err.message, "error");
           }
         },
+
+        approvePlan: () => get().send("Approved. Build the plan, one feature at a time.", { mode: "build", intent: "build" }),
 
         async openPreview() {
           const s = get();

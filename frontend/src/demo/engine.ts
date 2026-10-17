@@ -1,4 +1,4 @@
-import type { ServerEvent } from "@/lib/types";
+import type { PlanFeature, RunMode, ServerEvent } from "@/lib/types";
 import { AUTH_FILE, AUTH_TEST, BASE_FILES, BILLING_FILE } from "./files";
 
 /**
@@ -37,7 +37,12 @@ class Script {
   cmd(cmd: string, exit: number, output: string, took = 900) {
     return this.tool("run_command", { cmd }, `exit=${exit}\n${output}`, took);
   }
-  done(summary: string) { this.steps.push({ wait: 400, ev: { type: "done", data: { summary } } }); return this; }
+  done(summary: string, state?: "awaiting_approval" | "built") { this.steps.push({ wait: 400, ev: { type: "done", data: { summary, state } } }); return this; }
+  emit(ev: ServerEvent, wait = 200) { this.steps.push({ wait, ev }); return this; }
+  features(marks: number) {
+    const features = DEMO_FEATURES.map((f, i) => ({ ...f, passes: i < marks }));
+    return this.emit({ type: "features", data: { total: features.length, passing: marks, features } });
+  }
 }
 
 export interface DemoContext {
@@ -45,6 +50,47 @@ export interface DemoContext {
   scopeNodeId?: string;
   scopeFiles: string[];
   files: Record<string, string>;
+  mode?: RunMode;
+}
+
+const DEMO_FEATURES: PlanFeature[] = [
+  { id: "F1", title: "Project skeleton + quality gates (checks.sh: tests)", plain: "A clean project that checks itself on every change", category: "setup", passes: false },
+  { id: "F2", title: "Task model + SQLite persistence", plain: "Your tasks are saved and survive a restart", category: "data", passes: false },
+  { id: "F3", title: "REST API: create, list, toggle, delete", plain: "Add, finish and remove tasks", category: "functional", passes: false },
+  { id: "F4", title: "React UI wired to /api/tasks", plain: "A simple screen to manage your tasks", category: "ui", passes: false },
+  { id: "F5", title: "Input validation + friendly errors", plain: "Clear messages when something is wrong", category: "quality", passes: false },
+];
+
+function planScript(s: Script, revising: boolean) {
+  s.emit({ type: "phase", data: { phase: "planning" } })
+    .say(revising ? "Updating the plan with your changes.\n" : "Planning before building, so you can check it first.\n", 400)
+    .tool("list_dir", { path: "." }, "/workspace", 300)
+    .tool("create_file", { path: ".orqen/spec.md", chars: 1840 }, "wrote .orqen/spec.md (1840 chars)", 500)
+    .tool("create_file", { path: ".orqen/architecture.json", chars: 960 }, "wrote .orqen/architecture.json (960 chars)", 400)
+    .tool("create_file", { path: ".orqen/features.json", chars: 1220 }, "wrote .orqen/features.json (1220 chars)", 400)
+    .tool("submit_plan", { summary: "A task tracker" }, "Plan submitted with 5 features. Finish now with the summary.", 300)
+    .emit({
+      type: "plan",
+      data: {
+        summary: "A task tracker where you add, finish and remove tasks. Your tasks are saved, and the app explains any mistake in plain words.",
+        questions: [],
+        architecture: {
+          stack: { frontend: "React + Vite", backend: "Flask", database: "SQLite" },
+          components: [
+            { id: "web", name: "Web app", kind: "frontend", tech: "React + Vite", plain: "The screen you use" },
+            { id: "api", name: "Tasks API", kind: "service", tech: "Flask", plain: "Handles every change to your tasks" },
+            { id: "db", name: "Database", kind: "database", tech: "SQLite", plain: "Where tasks are kept" },
+          ],
+          connections: [{ from: "web", to: "api", label: "REST /api/tasks" }, { from: "api", to: "db", label: "SQLAlchemy" }],
+        },
+        total: DEMO_FEATURES.length,
+        passing: 0,
+        features: DEMO_FEATURES,
+      },
+    })
+    .say("Here's the plan: 5 features, from a self-checking skeleton to friendly errors. Approve it and I'll build and verify them one by one, or tell me what to change.")
+    .done("Plan ready for approval.", "awaiting_approval");
+  return s;
 }
 
 export function script(ctx: DemoContext): Script {
@@ -69,20 +115,32 @@ export function script(ctx: DemoContext): Script {
     return s;
   }
 
+  if (empty && ctx.mode !== "build") return planScript(s, ctx.mode === "plan");
+
   if (empty) {
-    s.say("Plan:\n- Flask API with a small service layer and SQLite via SQLAlchemy\n- React front end built with Vite, served by Flask\n- pytest for the main create, toggle and delete flow\n- run it on 0.0.0.0:3000 as the web process\n\n", 600)
+    s.emit({ type: "phase", data: { phase: "building", session: 1, max_sessions: 6 } });
+    s.say("Building the approved plan, one feature at a time. Each one is verified before I move on.\n\n", 600)
       .tool("list_dir", { path: "." }, "/workspace", 300);
     for (const path of ["README.md", ".gitignore", "requirements.txt", "package.json", "server/models.py", "server/services/tasks.py", "server/app.py", "web/index.html", "web/src/App.jsx", "web/src/components/TaskList.jsx"]) {
       s.file(path, BASE_FILES[path]);
     }
     s.cmd("pip install -r requirements.txt && pip install flask flask-sqlalchemy pytest", 0, "Successfully installed flask-3.0.3 flask-sqlalchemy-3.1.1 pytest-8.3.3", 1500)
       .cmd("npm install react react-dom vite @vitejs/plugin-react && npm run build", 0, "added 64 packages in 6s\nvite v5.4.10 building for production...\n✓ built in 812ms", 1700)
+      .features(2)
       .file("tests/test_api.py", BASE_FILES["tests/test_api.py"])
       .cmd("pytest -q", 0, ".                                                    [100%]\n1 passed in 0.41s", 1100)
+      .tool("run_checks", {}, "PASS (exit=0)\n1 passed in 0.41s", 700)
+      .tool("mark_feature", { id: "F3", passes: true }, "F3 marked passing. 3/5 pass. Next: F4.", 200)
+      .features(3)
       .tool("start_process", { name: "web", cmd: "python server/app.py" }, "started 'web'. First log lines:\n * Running on http://0.0.0.0:3000", 900)
       .tool("read_process_logs", { name: "web" }, "STATUS: running\n * Serving Flask app 'app'\n * Running on http://0.0.0.0:3000", 400)
       .cmd("curl -s -X POST localhost:3000/api/tasks -H 'Content-Type: application/json' -d '{\"title\":\"hello\"}'", 0, '{"done":false,"id":1,"title":"hello"}', 500)
+      .tool("mark_feature", { id: "F4", passes: true }, "F4 marked passing. 4/5 pass. Next: F5.", 200)
+      .features(4)
+      .tool("mark_feature", { id: "F5", passes: true }, "F5 marked passing. 5/5 pass. All features pass.", 200)
+      .features(5)
       .tool("checkpoint", { message: "Task tracker: API, UI, tests" }, "a1f3c9e Task tracker: API, UI, tests", 500)
+      .tool("update_progress", { chars: 180 }, "saved", 200)
       .say("Built a task tracker: Flask API in `server/`, React UI in `web/`, SQLite storage, and one end-to-end test that passes. It's running as `web` on port 3000, so the preview is live. Not done yet: there's no sign-in, so every endpoint is public.")
       .done("Task tracker built and running on :3000. Tests pass. No auth yet.");
     return s;

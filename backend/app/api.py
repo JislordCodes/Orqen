@@ -9,6 +9,7 @@ import httpx
 import re
 import secrets
 import uuid
+from typing import Literal
 
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -78,6 +79,8 @@ def check_project(project_id: str) -> str:
 class RunRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
     project_id: str = "main"  # one workspace + one chat history per project
+    # auto: plan a new project, build one that has an approved plan. plan: (re)plan. build: build the plan.
+    mode: Literal["auto", "plan", "build"] = "auto"
 
 
 @app.get("/health")
@@ -102,7 +105,7 @@ async def create_run(body: RunRequest, uid: str = Depends(current_user)):
     await r.rpush(
         config.JOBS_QUEUE,
         json.dumps(
-            {"run_id": run_id, "user_id": uid, "project_id": project_id, "prompt": body.prompt}
+            {"run_id": run_id, "user_id": uid, "project_id": project_id, "prompt": body.prompt, "mode": body.mode}
         ),
     )
     return {"run_id": run_id, "project_id": project_id}
