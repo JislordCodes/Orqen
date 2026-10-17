@@ -32,8 +32,11 @@ curl -s -m2 -o /dev/null localhost:4173/ || (setsid nohup npx vite preview --hos
 for port in 4173 3000; do
   ps -eo args | grep -q "^bash .*lr-tunnel.sh $port" || (setsid nohup bash "$ROOT/lr-tunnel.sh" $port >/dev/null 2>&1 &)
 done
+# The app also gets a Cloudflare quick tunnel: its URL lasts as long as cloudflared runs.
+ps -eo args | grep -q "^bash .*cf-tunnel.sh 4173" || (setsid nohup bash "$ROOT/cf-tunnel.sh" 4173 >/dev/null 2>&1 &)
+for i in $(seq 30); do [ -s /tmp/cf-4173.url ] && break; sleep 1; done
 for i in $(seq 30); do U=$(cat /tmp/lr-4173.url 2>/dev/null); [ -n "$U" ] && [ -s /tmp/lr-3000.url ] && break; sleep 1; done
 sleep 6; rm -f "$ROOT"/frontend/vite.config.ts.timestamp-*
 echo "api: $(curl -s -m5 localhost:8000/health)  worker: $(ps aux | grep -c '[a]pp.worker')  web: $(curl -s -m5 -o /dev/null -w '%{http_code}' localhost:4173/)"
-echo "url: $U"
+echo "url: $(cat /tmp/cf-4173.url 2>/dev/null)  (backup: $U)"
 echo "preview: $(cat /tmp/lr-3000.url 2>/dev/null)"

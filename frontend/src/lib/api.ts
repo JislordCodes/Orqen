@@ -85,7 +85,10 @@ export const api = {
    * backend uses to replay from the Redis Stream.
    */
   streamRun(c: Connection, runId: string, onEvent: (e: ServerEvent, id: string) => void, onFail: (msg: string) => void) {
-    const url = `${c.baseUrl.replace(/\/$/, "")}/runs/${runId}/events?user_id=${encodeURIComponent(c.userId)}`;
+    // Cloudflare quick tunnels hold a streaming response until it ends, so behind one we ask the
+    // server to answer in short batches and let EventSource reconnect (a long poll).
+    const poll = import.meta.env.VITE_SSE_POLL === "1" || /trycloudflare\.com$/.test(location.hostname);
+    const url = `${c.baseUrl.replace(/\/$/, "")}/runs/${runId}/events?user_id=${encodeURIComponent(c.userId)}${poll ? "&poll=1" : ""}`;
     const es = new EventSource(url);
     let finished = false;
     const types = ["status", "text", "tool_start", "tool_result", "done", "error", "phase", "plan", "features", "checks"] as const;

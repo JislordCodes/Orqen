@@ -117,14 +117,26 @@ async def stream_events(
     request: Request,
     uid: str = Depends(current_user),
     last_event_id: str = Header(default="0"),
+    poll: int = 0,
 ):
     """Server-Sent Events. Uses a Redis Stream, so a client that reconnects with
-    Last-Event-ID replays everything it missed."""
+    Last-Event-ID replays everything it missed.
+
+    poll=1 is for tunnels that buffer a streaming response until it ends (Cloudflare quick
+    tunnels do): each response sends what is ready (waiting up to 2 s) and then closes, and
+    the browser's EventSource reconnects with Last-Event-ID, which makes it a long poll."""
     if await r.get(config.owner_key(run_id)) != uid:
         raise HTTPException(404, "run not found")
 
     async def gen():
         last = last_event_id or "0"
+        if poll:
+            yield "retry: 250\n\n"
+            resp = await r.xread({config.stream_key(run_id): last}, block=2000, count=500)
+            for _, entries in resp or []:
+                for entry_id, fields in entries:
+                    yield f"id: {entry_id}\nevent: {fields['type']}\ndata: {fields['data']}\n\n"
+            return
         while True:
             if await request.is_disconnected():
                 return
