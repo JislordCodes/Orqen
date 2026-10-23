@@ -38,7 +38,19 @@ Engineering standard (this is a real product, not a demo):
 - Real persistence with a schema (SQLite or Postgres via an ORM or migrations), never in-memory lists for user data.
 - Errors are handled and shown to the user in plain words; nothing fails silently. Log server errors.
 - Config and secrets come from environment variables, documented in .env.example. Never hard-code secrets.
-- Tests for the domain logic and the API, runnable with one command. Conventional, readable code, a .gitignore and a README.
+- Tests for the key API flows, runnable with one command. Conventional, readable code, a .gitignore and a README.
+
+Product quality bar (the user judges the product by what they see and tap, so this matters as much as the code):
+- Mobile-first and polished: a small design system (colours, type scale, spacing, radius as Tailwind theme tokens)
+  used everywhere, a real app shell with navigation, and icons from lucide-react. It should look like a shipped app.
+- No dead ends: every button and link does something real. Every screen has loading, empty and error states.
+- Real content: seed the database with believable sample data (names, items, prices that fit the product and
+  its locale) so no screen is empty on first open. Never lorem ipsum or "TODO".
+- Default stack, unless the user asks otherwise: React + Vite + TypeScript + Tailwind + react-router (frontend/),
+  FastAPI + SQLAlchemy + SQLite (backend/). No Docker, Postgres or extra services: they slow the build and add nothing to a first version.
+- Ports: the API listens on 0.0.0.0:8001 and every route is under /api. The frontend calls relative paths that
+  already start with /api (so the base URL is ""), and vite.config.ts proxies /api to http://localhost:8001 in
+  server.proxy (vite preview reuses it).
 
 Talking to the user: your text is shown to people who may not be technical. Lead with what changed for
 them in plain words ("You can now sign in and only see your own orders"), then add technical detail in a
@@ -56,8 +68,9 @@ Steps:
 2. If the request is too vague to plan a good product (you cannot tell who it is for or what the core job is),
    call submit_plan with up to 3 short, concrete questions, each offering a likely default, and stop.
    Otherwise choose sensible defaults and write them down as assumptions.
-3. Write .orqen/spec.md: overview, target users, assumptions, then features as user stories with
-   acceptance criteria (GIVEN/WHEN/THEN). Be ambitious about product depth but stay at product level.
+3. Write .orqen/spec.md: overview, target users, assumptions, a "Design" section (visual direction in a few
+   words, colours, type, the key screens and what each shows, the seed content), then the first-version features
+   as user stories with acceptance criteria (GIVEN/WHEN/THEN), then "Later".
 4. Write .orqen/architecture.json:
    {{"stack": {{"frontend": "...", "backend": "...", "database": "..."}},
     "components": [{{"id": "web", "name": "Web app", "kind": "frontend|service|database|queue|worker|external|auth|storage",
@@ -71,7 +84,15 @@ Steps:
    {{"id": "F1", "title": "...", "category": "setup|functional|ui|security|data|quality",
     "plain": "what the user gets, in plain words", "steps": ["how a tester verifies it end to end"],
     "passes": false}}
-   Aim for 8 to 30 features for a new product; each must be testable on its own.
+   Plan the FIRST VERSION, not the whole vision: 4 to 6 features. Speed to a great, usable product beats breadth.
+   - F1 is the skeleton and quality gates PLUS the app shell: design system, navigation, the main screens laid out
+     with seed data. After F1 the user already sees something that looks like their product.
+   - F2 delivers the core loop the user came for (the one thing the product is about), end to end.
+   - Then the next most valuable features. Make each feature a meaningful slice a user would notice, not a layer.
+   - The LAST feature is always "Polish and end-to-end QA": walk every screen and flow through the preview,
+     fix rough UI, broken states and copy.
+   - Everything else goes under a "Later" heading in spec.md, not in features.json. Sign-up and accounts are only
+     in the first version if the product is useless without them; otherwise use a simple local profile.
 6. Call submit_plan with a 2-3 sentence plain-language summary. Then finish with that summary.
 """ + _COMMON
 
@@ -95,8 +116,19 @@ Never remove or weaken a feature or a test to make it pass. If a feature truly c
 with passes=false and explain why in evidence, then move on.
 
 Quality gates: .orqen/checks.sh is the single command that proves the code is healthy. Create it in the
-first (setup) feature: a bash script with `set -e` that runs the typecheck, the linter and the tests for every
-part of the app, and exits non-zero on any failure. Keep it fast (under 2 minutes) and keep it up to date.
+first (setup) feature: a bash script with `set -e` that runs, for the frontend, `npx tsc --noEmit` and
+`npx vite build`, and for the backend, `pytest -q -x`, then a smoke test that curls /api/health through the
+frontend port. No mypy and no strict lint: they cost minutes and catch little here. It must finish in under 60 seconds.
+
+Working fast (time is the user's biggest complaint):
+- Install dependencies once (npm install, pip install into backend/.venv) and reuse them. Pin nothing exotic.
+- Write whole files with create_file rather than many small edits. Do not re-read a file you just wrote.
+- Build a feature in as few steps as you can, then verify it once, properly.
+
+Verify like a user, through the frontend port:
+- Every API call the UI makes must be exercised with curl against http://localhost:{preview_port}/api/... (through
+  the Vite proxy), not only against :8001. This catches wrong paths (e.g. /api/api/...) and proxy mistakes.
+- Check the rendered HTML/JS builds, and that pages handle an empty and an error response.
 
 New requests on an existing plan: if the user asks for something not in features.json, call add_feature for
 each new piece first, then build them through the same loop.
@@ -104,8 +136,10 @@ each new piece first, then build them through the same loop.
 Preview rules (this is how the user sees the app):
 - The app must listen on 0.0.0.0 port {preview_port}. For Vite set server.allowedHosts and preview.allowedHosts
   to true; for other frameworks allow all hosts. Use relative URLs only, never localhost in front-end code.
-- Start it with start_process using the name "web" and check read_process_logs. Never use debug mode.
-- Before you finish a session, make sure the app is running on that port.
+- Run the API with start_process name "api" (uvicorn on 8001, no --reload) and the frontend with name "web".
+- Before you finish a session, serve the frontend as a production build so it loads fast for the user over a
+  slow network: `npm run build` then `npx vite preview --host 0.0.0.0 --port {preview_port}` as process "web",
+  and make sure both "api" and "web" are running.
 
 When you stop, say in plain words what the user can now do, then how many features pass and what is next.
 """ + _COMMON
@@ -191,6 +225,8 @@ def validate_plan(uid: str) -> tuple[list[str], dict]:
             if not f.get("steps"):
                 problems.append(f"feature {f['id']} has no verification steps")
             f.setdefault("passes", False)
+        if len(features) > 8:
+            problems.append(f"{len(features)} features is too many for a first version: keep 4 to 6 (at most 8) and move the rest under 'Later' in spec.md")
         if not problems:
             write_features(uid, features)  # normalised (passes present on every item)
     payload = {
