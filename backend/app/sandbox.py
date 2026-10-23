@@ -60,6 +60,20 @@ def snapshot(user_id: str) -> bool:
             return False
 
 
+def archive(user_id: str, label: str = "") -> str | None:
+    """Keep a dated copy of the project before something may replace it (e.g. a new plan)."""
+    path = _snapshot_path(user_id)
+    if not path or not snapshot(user_id):
+        return None
+    slug = "".join(ch if ch.isalnum() else "-" for ch in label.lower())[:40].strip("-")
+    dest = os.path.join(os.path.dirname(path), "archive",
+                        f"{user_id}.{time.strftime('%Y%m%d-%H%M%S')}{'.' + slug if slug else ''}.tar.gz")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(path, "rb") as src, open(dest, "wb") as out:
+        out.write(src.read())
+    return dest
+
+
 def _restore(user_id: str, container) -> None:
     path = _snapshot_path(user_id)
     if not path or not os.path.exists(path):

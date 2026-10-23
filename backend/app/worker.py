@@ -26,6 +26,14 @@ def _choose_mode(job: dict, ctx: RunContext) -> str:
 
 def run_plan(job: dict, ctx: RunContext) -> None:
     ctx.emit("phase", {"phase": "planning"})
+    # A new plan may replace whatever is in this workspace, so keep a dated copy first.
+    try:
+        spec = sandbox.read_file(ctx.sandbox_id, harness.SPEC)
+        title = spec.strip().splitlines()[0].lstrip("# ") if spec.strip() else ""
+        if title:
+            sandbox.archive(ctx.sandbox_id, title)
+    except Exception:  # noqa: BLE001 - no plan yet, or archiving failed; never block planning
+        pass
     agent = build_agent(ctx, "planner")
     result = agent(job["prompt"])
     ctx.flush_text()
