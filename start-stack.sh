@@ -2,9 +2,9 @@
 # Bring the whole Orqen stack back after a Hark sandbox reset. Idempotent.
 set -u
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-if ! command -v redis-server >/dev/null || ! command -v dockerd >/dev/null; then
+if ! command -v redis-server >/dev/null || ! command -v dockerd >/dev/null || ! command -v chromium >/dev/null; then
   sudo -n apt-get update -qq >/dev/null 2>&1
-  sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-server docker.io >/tmp/apt.log 2>&1
+  sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq redis-server docker.io chromium >/tmp/apt.log 2>&1
 fi
 command -v ssh >/dev/null || sudo -n apt-get install -y -qq openssh-client >/dev/null 2>&1
 redis-cli ping >/dev/null 2>&1 || redis-server --daemonize yes >/dev/null

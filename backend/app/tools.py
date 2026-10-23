@@ -11,7 +11,7 @@ import threading
 
 from strands import tool
 
-from . import config, harness, sandbox
+from . import config, harness, sandbox, uicheck
 from .events import RunContext
 
 # The model often calls several tools in one turn and Strands runs them concurrently, so the
@@ -348,7 +348,8 @@ def build_tools(ctx: RunContext, role: str = "builder") -> list:
 
     @tool
     def run_checks() -> str:
-        """Run the quality gates: bash .orqen/checks.sh (typecheck, lint, tests).
+        """Run the quality gates: bash .orqen/checks.sh (typecheck, build, tests), then load every route of the
+        running app in a headless browser (blank pages and console errors fail).
         A green result is required before mark_feature(passes=true)."""
 
         def go():
@@ -360,6 +361,12 @@ def build_tools(ctx: RunContext, role: str = "builder") -> list:
                 )
             code, out = sandbox.sh(uid, f"bash {harness.CHECKS}", timeout=300)
             ok = code == 0
+            if ok:
+                # Typecheck and tests miss runtime crashes, so also load every route in a real browser.
+                ui_ok, report = uicheck.check(uid)
+                out = f"{out}\n{report}"
+                if not ui_ok:
+                    ok, code = False, 1
             ctx.checks_green = ok
             ctx.passes_since_checks = 0
             if ok:

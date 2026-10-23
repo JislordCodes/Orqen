@@ -128,7 +128,8 @@ Working fast (time is the user's biggest complaint):
 Verify like a user, through the frontend port:
 - Every API call the UI makes must be exercised with curl against http://localhost:{preview_port}/api/... (through
   the Vite proxy), not only against :8001. This catches wrong paths (e.g. /api/api/...) and proxy mistakes.
-- Check the rendered HTML/JS builds, and that pages handle an empty and an error response.
+- run_checks also opens every route of the running app in a real headless browser: a blank page or a console
+  error fails it. Keep "api" and "web" running (web serving the latest build) whenever you call run_checks.
 
 New requests on an existing plan: if the user asks for something not in features.json, call add_feature for
 each new piece first, then build them through the same loop.

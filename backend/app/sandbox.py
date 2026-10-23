@@ -45,8 +45,10 @@ def snapshot(user_id: str) -> bool:
         try:
             ex = " ".join(f"--exclude='{e}'" for e in SNAPSHOT_EXCLUDES)
             code, (out, err) = get_container(user_id).exec_run(
-                ["sh", "-c", f"tar czf - {ex} -C {WORKSPACE} ."], demux=True)
-            if code != 0 or not out:
+                ["sh", "-c", f"tar czf - --ignore-failed-read --warning=no-file-changed {ex} -C {WORKSPACE} ."], demux=True)
+            # tar exits 1 when a file changed while it was read (a dev server, an SQLite db); the
+            # archive is still complete, so only exit 2+ is a failure.
+            if code not in (0, 1) or not out:
                 log.warning("snapshot of %s failed: %s", user_id, (err or b"")[:300])
                 return False
             os.makedirs(os.path.dirname(path), exist_ok=True)
