@@ -8,7 +8,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from . import config, harness
+from . import config, harness, sandbox
 from .agent import build_agent
 from .events import RunContext, get_redis
 
@@ -74,6 +74,7 @@ def run_job(job: dict) -> None:
         ctx.flush_text()
         ctx.emit("error", {"message": str(e)})
     finally:
+        sandbox.snapshot(ctx.sandbox_id)
         # Release the per-project lock, but only if it is still ours.
         key = config.lock_key(ctx.sandbox_id)
         # get_redis() returns bytes, so decode before comparing (otherwise the lock is

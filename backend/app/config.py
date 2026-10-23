@@ -65,3 +65,7 @@ def lock_key(sandbox_id: str) -> str:
 
 def preview_key(token: str) -> str:
     return f"preview:{token}"
+
+# Durable copy of each project's source, restored if the Docker volume is lost ("" disables).
+SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "")
+SNAPSHOT_EVERY = int(os.getenv("SNAPSHOT_EVERY", "15"))  # tool calls between snapshots

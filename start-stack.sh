@@ -25,7 +25,7 @@ if ! ps aux | grep -q "[a]pp.worker"; then
     redis-cli del "$k" >/dev/null
   done
 fi
-ps aux | grep -q "[a]pp.worker" || (MAX_TOOL_CALLS=${MAX_TOOL_CALLS:-200} SANDBOX_NETWORK=host BASE_URL=https://api.studio.nebius.com/v1/ MODEL_ID=${MODEL_ID:-moonshotai/Kimi-K2.7-Code} setsid nohup .venv/bin/python -m app.worker >/tmp/worker.log 2>&1 &)
+ps aux | grep -q "[a]pp.worker" || (MAX_TOOL_CALLS=${MAX_TOOL_CALLS:-200} SNAPSHOT_DIR=${SNAPSHOT_DIR:-$ROOT/snapshots} SANDBOX_NETWORK=host BASE_URL=https://api.studio.nebius.com/v1/ MODEL_ID=${MODEL_ID:-moonshotai/Kimi-K2.7-Code} setsid nohup .venv/bin/python -m app.worker >/tmp/worker.log 2>&1 &)
 cd "$ROOT/frontend"
 curl -s -m2 -o /dev/null localhost:4173/ || (setsid nohup npx vite preview --host 0.0.0.0 --port 4173 >/tmp/vite.log 2>&1 &)
 # localhost.run tunnels (they stream SSE live; Cloudflare quick tunnels buffer it). App on 4173, preview on 3000.

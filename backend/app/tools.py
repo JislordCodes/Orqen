@@ -73,6 +73,8 @@ def build_tools(ctx: RunContext, role: str = "builder") -> list:
                 ctx.edits += 1
         out = _clip(out)
         ctx.emit("tool_result", {"name": name, "output": out[:1500]})
+        if name in ("mark_feature", "checkpoint", "submit_plan") or n % config.SNAPSHOT_EVERY == 0:
+            sandbox.snapshot(uid)
         return out
 
     def guard_plan_files(path: str) -> str | None:
