@@ -18,6 +18,7 @@ export default function App() {
     const s = useStore.getState();
     s.checkHealth();
     s.resumeStreams();
+    void s.syncProjects();
     s.syncTree();
   }, [mode]);
 

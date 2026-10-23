@@ -43,6 +43,14 @@ async function call<T>(c: Connection, path: string, init?: RequestInit): Promise
   return res.json();
 }
 
+export interface ServerProject {
+  id: string;
+  name: string;
+  updated_at: number;
+  active_run_id: string | null;
+  runs: { run_id: string; prompt: string; mode: RunMode; ts: number }[];
+}
+
 export const api = {
   health: (c: Connection) => call<{ ok: boolean }>(c, "/health"),
 
@@ -51,6 +59,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ prompt, project_id: projectId, mode }),
     }),
+
+  /** The user's projects as the server knows them (runs + snapshots). Null if the endpoint is missing. */
+  async projects(c: Connection): Promise<ServerProject[] | null> {
+    try {
+      return (await call<{ projects: ServerProject[] }>(c, "/projects")).projects;
+    } catch {
+      return null;
+    }
+  },
 
   preview: (c: Connection, projectId: string) =>
     call<{ url: string; expires_in: number }>(c, "/preview", {

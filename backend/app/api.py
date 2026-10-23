@@ -4,6 +4,9 @@ Run with:  uvicorn app.api:app --host 0.0.0.0 --port 8000
 """
 import json
 import os
+import tarfile
+import time
+from pathlib import Path
 
 import httpx
 import re
@@ -102,6 +105,11 @@ async def create_run(body: RunRequest, uid: str = Depends(current_user)):
         raise HTTPException(409, "this project already has a run in progress")
 
     await r.set(config.owner_key(run_id), uid, ex=60 * 60 * 24)
+    # Server-side record of the user's projects and runs, so any browser (or a new tunnel URL,
+    # whose localStorage is empty) can list them with GET /projects.
+    await r.lpush(f"runs:{sandbox_id}", json.dumps({"run_id": run_id, "prompt": body.prompt[:2000], "mode": body.mode, "ts": time.time()}))
+    await r.ltrim(f"runs:{sandbox_id}", 0, 49)
+    await r.zadd(f"projects:{uid}", {project_id: time.time()})
     await r.rpush(
         config.JOBS_QUEUE,
         json.dumps(
@@ -109,6 +117,43 @@ async def create_run(body: RunRequest, uid: str = Depends(current_user)):
         ),
     )
     return {"run_id": run_id, "project_id": project_id}
+
+
+def _snapshot_title(path: Path) -> str:
+    """The product name from .orqen/spec.md in a project snapshot ("# Snake — Product Spec" -> "Snake")."""
+    try:
+        with tarfile.open(path) as tf:
+            f = tf.extractfile("./.orqen/spec.md")
+            first = f.read(400).decode(errors="ignore").splitlines()[0] if f else ""
+    except Exception:
+        return ""
+    t = first.lstrip("# ").strip()
+    return re.split(r"\s+[—–-]\s+(Product )?Spec", t)[0].strip()[:60]
+
+
+@app.get("/projects")
+async def list_projects(uid: str = Depends(current_user)):
+    """The user's projects, known from runs and durable snapshots, with recent runs (newest first)
+    and the active run if one holds the project lock. The UI merges this into its local list."""
+    ids: dict[str, float] = {p: ts for p, ts in await r.zrange(f"projects:{uid}", 0, -1, withscores=True)}
+    if config.SNAPSHOT_DIR:
+        for f in Path(config.SNAPSHOT_DIR).glob(f"{uid}-*.tar.gz"):
+            pid = f.name[len(uid) + 1 : -len(".tar.gz")]
+            if SLUG.match(pid):
+                ids[pid] = max(ids.get(pid, 0), f.stat().st_mtime)
+    out = []
+    for pid, ts in sorted(ids.items(), key=lambda kv: -kv[1]):
+        sid = f"{uid}-{pid}"
+        snap = Path(config.SNAPSHOT_DIR) / f"{sid}.tar.gz" if config.SNAPSHOT_DIR else None
+        runs = [json.loads(x) for x in await r.lrange(f"runs:{sid}", 0, 19)]
+        out.append({
+            "id": pid,
+            "name": (_snapshot_title(snap) if snap and snap.exists() else "") or pid.replace("-", " ").capitalize(),
+            "updated_at": ts,
+            "active_run_id": await r.get(config.lock_key(sid)),
+            "runs": runs,
+        })
+    return {"projects": out}
 
 
 @app.get("/runs/{run_id}/events")

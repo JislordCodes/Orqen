@@ -15,7 +15,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 docker image inspect appbuilder-sandbox:latest >/dev/null 2>&1 || docker build -q --network host -t appbuilder-sandbox:latest "$ROOT/backend/sandbox_image" >/tmp/build.log 2>&1
 cd "$ROOT/backend"
-curl -s -m2 localhost:8000/health >/dev/null || (SANDBOX_NETWORK=host PREVIEW_URL_FILE=/tmp/lr-3000.url setsid nohup .venv/bin/uvicorn app.api:app --port 8000 >/tmp/api.log 2>&1 &)
+curl -s -m2 localhost:8000/health >/dev/null || (SNAPSHOT_DIR=${SNAPSHOT_DIR:-$ROOT/snapshots} SANDBOX_NETWORK=host PREVIEW_URL_FILE=/tmp/lr-3000.url setsid nohup .venv/bin/uvicorn app.api:app --port 8000 >/tmp/api.log 2>&1 &)
 # No worker means any run lock left in Redis (restored from its dump after a reset) is stale: it would
 # make POST /runs answer 409 for up to an hour. Close those runs with an error event and free the lock.
 if ! ps aux | grep -q "[a]pp.worker"; then

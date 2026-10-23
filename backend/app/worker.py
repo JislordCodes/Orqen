@@ -3,6 +3,7 @@
 Run with:  python -m app.worker
 Scale by starting more worker processes (or machines). They share the same queue.
 """
+from strands.types.exceptions import MaxTokensReachedException
 import json
 import logging
 import threading
@@ -35,10 +36,26 @@ def run_plan(job: dict, ctx: RunContext) -> None:
     except Exception:  # noqa: BLE001 - no plan yet, or archiving failed; never block planning
         pass
     agent = build_agent(ctx, "planner")
-    result = agent(job["prompt"])
+    result = _call(agent, job["prompt"], ctx)
     ctx.flush_text()
     state = ctx.plan_state or "no_plan"
     ctx.emit("done", {"summary": str(result)[:2000], "state": "awaiting_approval" if state == "submitted" else state})
+
+
+def _call(agent, prompt: str, ctx: RunContext):
+    """One agent call that survives the model hitting its output limit mid-file (Strands raises
+    MaxTokensReachedException and keeps the partial turn): nudge it to write smaller pieces."""
+    for attempt in range(4):
+        try:
+            return agent(prompt)
+        except MaxTokensReachedException:
+            if attempt == 3:
+                raise
+            ctx.flush_text()
+            ctx.emit("text", {"text": "\n(Output limit hit mid-file; continuing in smaller pieces.)\n"})
+            prompt = ("Your last reply was cut off by the output limit, so that tool call did not run. "
+                      "Write big files in smaller parts: create a short file first, then extend it with str_replace, "
+                      "keeping each tool call under about 300 lines. Continue from where you stopped.")
 
 
 def run_build(job: dict, ctx: RunContext) -> None:
@@ -50,7 +67,7 @@ def run_build(job: dict, ctx: RunContext) -> None:
     for session in range(1, config.MAX_SESSIONS + 1):
         ctx.new_session()
         ctx.emit("phase", {"phase": "building", "session": session, "max_sessions": config.MAX_SESSIONS})
-        result = agent(prompt)
+        result = _call(agent, prompt, ctx)
         ctx.flush_text()
         feats = harness.read_features(ctx.sandbox_id)
         if not feats:

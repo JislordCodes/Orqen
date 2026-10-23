@@ -72,6 +72,8 @@ interface State {
   toast: (text: string, tone?: Toast["tone"]) => void;
   dismissToast: (id: string) => void;
   resumeStreams: () => void;
+  /** Live mode: merge in projects and runs the server knows (e.g. made on another URL). */
+  syncProjects: () => Promise<void>;
 }
 
 const ENV_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
@@ -339,6 +341,48 @@ export const useStore = create<State>()(
           setTimeout(() => get().dismissToast(id), tone === "error" ? 7000 : 3500);
         },
         dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+        async syncProjects() {
+          const s = get();
+          if (s.mode !== "live") return;
+          const list = await api.projects(s.conn);
+          if (!list?.length) return;
+          const known = new Set(get().projects.map((p) => p.id));
+          const added: Project[] = list
+            .filter((p) => !known.has(p.id))
+            .map((p) => ({ id: p.id, name: p.name, createdAt: Math.round((p.runs[p.runs.length - 1]?.ts ?? p.updated_at) * 1000) }));
+          const fresh: [string, string][] = [];
+          set((st) => {
+            const runs = { ...st.runs };
+            for (const p of list) {
+              const have = new Set((runs[p.id] ?? []).map((r) => r.id));
+              const missing: Run[] = p.runs
+                .filter((r) => !have.has(r.run_id))
+                .reverse()
+                .map((r) => ({
+                  id: r.run_id,
+                  projectId: p.id,
+                  prompt: r.prompt,
+                  intent: "build",
+                  mode: r.mode,
+                  status: "running",
+                  events: [],
+                  startedAt: Math.round(r.ts * 1000),
+                }));
+              if (missing.length) {
+                runs[p.id] = [...(runs[p.id] ?? []), ...missing].sort((a, b) => a.startedAt - b.startedAt);
+                for (const r of missing) fresh.push([p.id, r.id]);
+              }
+            }
+            return { projects: [...st.projects, ...added], runs };
+          });
+          // Replay each recovered run from the server's event log; finished ones settle on their done/error event.
+          for (const [pid, rid] of fresh) if (!streams.has(rid)) subscribe(pid, rid);
+          const active = list.find((p) => p.active_run_id);
+          if (added.length && active && get().projectId === "main" && !(get().runs.main ?? []).length) {
+            get().switchProject(active.id);
+          }
+        },
 
         /** After a reload: reattach to live runs (SSE replays from the start), close dead demo runs. */
         resumeStreams() {

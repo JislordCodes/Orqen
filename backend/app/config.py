@@ -11,7 +11,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 MODEL_ID = os.getenv("MODEL_ID", "")
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", "8192"))
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "32000"))  # 8192 cut GLM-5.3 off mid-file
 # Context window of MODEL_ID in tokens; drives proactive summarisation (agent.py).
 CONTEXT_WINDOW = int(os.getenv("CONTEXT_WINDOW", "131072"))
 # Optional stronger reasoning model for the planner (e.g. moonshotai/Kimi-K3). Empty = MODEL_ID.
