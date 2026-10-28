@@ -1,0 +1,6 @@
+# terraform init -backend-config=backend.hcl
+bucket         = "orqen-tfstate-123456789012"    # globally unique; create it first (versioned, encrypted)
+key            = "orqen/prod/terraform.tfstate"
+region         = "eu-west-1"
+dynamodb_table = "orqen-tf-locks"                # partition key "LockID" (String)
+encrypt        = true

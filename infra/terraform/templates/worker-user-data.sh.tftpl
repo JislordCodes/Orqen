@@ -1,0 +1,191 @@
+#!/bin/bash
+# Orqen worker host bootstrap (Amazon Linux 2023). Rendered by Terraform (worker.tf).
+# Installs Docker, firewalls the sandbox network, and runs the worker container under systemd.
+set -euxo pipefail
+
+REGION="${region}"
+SSM_PREFIX="${ssm_prefix}"
+
+dnf install -y docker jq
+mkdir -p /etc/docker
+cat >/etc/docker/daemon.json <<'JSON'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "20m", "max-file": "3" },
+  "live-restore": true,
+  "default-ulimits": { "nofile": { "Name": "nofile", "Soft": 65536, "Hard": 65536 } }
+}
+JSON
+systemctl enable --now docker
+
+# Dedicated network for sandboxes, so the firewall below can single them out.
+docker network inspect ${sandbox_network} >/dev/null 2>&1 || \
+  docker network create --driver bridge --subnet ${sandbox_cidr} ${sandbox_network}
+
+# Sandboxes run untrusted, AI-written code: they may reach the internet (npm/pip) but not the VPC
+# (Redis, other hosts) nor the instance metadata service (the instance role's credentials).
+# IMDSv2 with hop limit 1 already stops containers on bridge networks from reading metadata; this is
+# the second layer. Replies to the API's connections to published ports are still allowed.
+cat >/usr/local/sbin/orqen-firewall.sh <<FW
+#!/bin/bash
+# DOCKER-USER ends with a RETURN rule, so every rule here is INSERTED (order: allow replies, then drops).
+for dst in 169.254.169.254/32 169.254.170.2/32 ${vpc_cidr}; do
+  iptables -C DOCKER-USER -s ${sandbox_cidr} -d \$dst -j DROP 2>/dev/null || \
+    iptables -I DOCKER-USER 1 -s ${sandbox_cidr} -d \$dst -j DROP
+done
+iptables -C DOCKER-USER -s ${sandbox_cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || \
+  iptables -I DOCKER-USER 1 -s ${sandbox_cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+# Host-side services (e.g. the worker's health port) are not for sandboxes either.
+iptables -C INPUT -s ${sandbox_cidr} -m conntrack --ctstate NEW -j DROP 2>/dev/null || \
+  iptables -I INPUT 1 -s ${sandbox_cidr} -m conntrack --ctstate NEW -j DROP
+FW
+chmod +x /usr/local/sbin/orqen-firewall.sh
+cat >/etc/systemd/system/orqen-firewall.service <<'UNIT'
+[Unit]
+Description=Orqen sandbox firewall
+After=docker.service
+Requires=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/orqen-firewall.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+mkdir -p /opt/orqen /var/lib/orqen/snapshots /var/lib/orqen/sessions
+chown -R 10001:10001 /var/lib/orqen
+
+# Renders /opt/orqen/worker.env from Secrets Manager + SSM on every (re)start, so rotating a secret
+# or deploying a new image only needs `systemctl restart orqen-worker`.
+cat >/opt/orqen/render-env.sh <<SCRIPT
+#!/bin/bash
+set -euo pipefail
+TOKEN=\$(curl -sX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')
+PRIVATE_IP=\$(curl -s -H "X-aws-ec2-metadata-token: \$TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+param() { aws ssm get-parameter --region $REGION --name "$SSM_PREFIX/\$1" --query Parameter.Value --output text; }
+secret() { aws secretsmanager get-secret-value --region $REGION --secret-id "\$1" --query SecretString --output text; }
+WORKER_IMAGE=\$(param worker_image)
+SANDBOX_IMAGE=\$(param sandbox_image)
+umask 077
+cat >/opt/orqen/worker.env <<ENV
+APP_ENV=production
+LOG_FORMAT=json
+REDIS_URL=${redis_url}
+REDIS_PASSWORD=\$(secret ${redis_secret_arn})
+NEBIUS_API_KEY=\$(secret ${nebius_secret_arn})
+BASE_URL=${llm_base_url}
+MODEL_ID=${llm_model_id}
+PLANNER_MODEL_ID=${llm_planner_model_id}
+SANDBOX_IMAGE=\$SANDBOX_IMAGE
+SANDBOX_NETWORK=${sandbox_network}
+SANDBOX_PUBLISH_IP=0.0.0.0
+SANDBOX_ADVERTISE_HOST=\$PRIVATE_IP
+SANDBOX_MEM=${sandbox_mem}
+SANDBOX_CPUS=${sandbox_cpus}
+MAX_CONCURRENT_RUNS=${max_concurrent_runs}
+WORKER_SHUTDOWN_GRACE=${shutdown_grace}
+WORKER_HEALTH_PORT=8081
+SNAPSHOT_DIR=/data/snapshots
+SNAPSHOT_S3_BUCKET=${state_bucket}
+SNAPSHOT_S3_PREFIX=snapshots/
+SESSIONS_DIR=/data/sessions
+SESSIONS_S3_BUCKET=${state_bucket}
+SESSIONS_S3_PREFIX=sessions/
+AWS_REGION=$REGION
+ENV
+echo "WORKER_IMAGE=\$WORKER_IMAGE" >/opt/orqen/images.env
+echo "SANDBOX_IMAGE=\$SANDBOX_IMAGE" >>/opt/orqen/images.env
+REGISTRY=\$${WORKER_IMAGE%%/*}
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin "\$REGISTRY" >/dev/null
+docker pull -q "\$WORKER_IMAGE"
+docker pull -q "\$SANDBOX_IMAGE"
+SCRIPT
+chmod 700 /opt/orqen/render-env.sh
+
+# The worker container uses the HOST network: it reaches IMDS for its role credentials (hop limit 1)
+# and the sandboxes' published ports on localhost, while sandboxes on the bridge cannot reach IMDS.
+cat >/opt/orqen/run-worker.sh <<SCRIPT
+#!/bin/bash
+set -euo pipefail
+source /opt/orqen/images.env
+exec /usr/bin/docker run --rm --name orqen-worker \
+  --network host --env-file /opt/orqen/worker.env \
+  -v /var/run/docker.sock:/var/run/docker.sock --group-add "\$(stat -c %g /var/run/docker.sock)" \
+  -v /var/lib/orqen:/data \
+  --log-driver awslogs --log-opt awslogs-region=$REGION --log-opt awslogs-group=${log_group} \
+  --log-opt awslogs-stream="\$(hostname)-worker" \
+  "\$WORKER_IMAGE"
+SCRIPT
+chmod 700 /opt/orqen/run-worker.sh
+
+cat >/etc/systemd/system/orqen-worker.service <<'UNIT'
+[Unit]
+Description=Orqen worker
+After=docker.service orqen-firewall.service network-online.target
+Requires=docker.service orqen-firewall.service
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=600
+# Docker stop waits for the worker to drain (grace + 45 s for cancel + re-queue).
+TimeoutStopSec=${shutdown_grace + 60}
+ExecStartPre=/opt/orqen/render-env.sh
+ExecStartPre=-/usr/bin/docker rm -f orqen-worker
+ExecStart=/opt/orqen/run-worker.sh
+ExecStop=/usr/bin/docker stop -t ${shutdown_grace + 45} orqen-worker
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# Deploy entry point (CI runs it through SSM Run Command): new images and secrets, same host and volumes.
+cat >/opt/orqen/deploy.sh <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+/opt/orqen/render-env.sh
+systemctl restart orqen-worker
+sleep 10
+curl -fsS http://127.0.0.1:8081/ready
+SCRIPT
+chmod 700 /opt/orqen/deploy.sh
+
+# Scale-in / instance refresh: the ASG termination lifecycle hook holds the instance while the worker
+# drains (re-queues unfinished runs, uploads snapshots), then this script lets termination continue.
+cat >/opt/orqen/lifecycle-watch.sh <<SCRIPT
+#!/bin/bash
+TOKEN=\$(curl -sX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+STATE=\$(curl -s -H "X-aws-ec2-metadata-token: \$TOKEN" http://169.254.169.254/latest/meta-data/autoscaling/target-lifecycle-state || true)
+[ "\$STATE" = "Terminated" ] || exit 0
+ID=\$(curl -s -H "X-aws-ec2-metadata-token: \$TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+systemctl stop orqen-worker
+aws autoscaling complete-lifecycle-action --region $REGION --auto-scaling-group-name ${asg_name} \
+  --lifecycle-hook-name ${lifecycle_hook} --instance-id "\$ID" --lifecycle-action-result CONTINUE
+SCRIPT
+chmod 700 /opt/orqen/lifecycle-watch.sh
+cat >/etc/systemd/system/orqen-lifecycle.service <<'UNIT'
+[Unit]
+Description=Orqen ASG lifecycle watcher
+[Service]
+Type=oneshot
+ExecStart=/opt/orqen/lifecycle-watch.sh
+UNIT
+cat >/etc/systemd/system/orqen-lifecycle.timer <<'UNIT'
+[Unit]
+Description=Poll the ASG lifecycle state every 15 s
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=15
+[Install]
+WantedBy=timers.target
+UNIT
+
+# Remove sandboxes idle for a week (their source is in S3 snapshots; volumes are kept).
+cat >/etc/cron.daily/orqen-prune <<'CRON'
+#!/bin/bash
+docker container prune -f --filter "label=appbuilder=sandbox" --filter "until=168h" >/dev/null
+docker image prune -af --filter "until=336h" >/dev/null
+CRON
+chmod +x /etc/cron.daily/orqen-prune
+
+systemctl daemon-reload
+systemctl enable --now orqen-firewall.service orqen-worker.service orqen-lifecycle.timer
