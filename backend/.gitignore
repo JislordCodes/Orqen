@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 sessions/
+.env.*
+!.env.example
+snapshots/
+.pytest_cache/

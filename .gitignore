@@ -1,1 +1,57 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data (never commit)
+dump.rdb
+*.rdb
+backend/sessions/
+sessions/
 snapshots/
+backend/snapshots/
+
+# Secrets: commit only the .env.example files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Tunnel URL / lock files written by cf-tunnel.sh and lr-tunnel.sh
+*.url
+cf-*.lock
+lr-*.lock
+cloudflared
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.auto.tfvars
+terraform.tfvars
+!terraform.tfvars.example
+infra/terraform/backend.hcl
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Vite timestamp files
+vite.config.ts.timestamp-*
+
+# Release artefacts
+*.zip
