@@ -1,4 +1,5 @@
 import type { RunMode, ServerEvent } from "./types";
+import { getToken } from "./auth";
 
 /**
  * Client for backend/app/api.py. Only these routes exist today:
@@ -23,10 +24,16 @@ export class ApiError extends Error {
 
 async function call<T>(c: Connection, path: string, init?: RequestInit): Promise<T> {
   let res: Response;
+  const token = await getToken();
   try {
     res = await fetch(`${c.baseUrl.replace(/\/$/, "")}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", "X-User-Id": c.userId, ...(init?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        "X-User-Id": c.userId,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers ?? {}),
+      },
     });
   } catch {
     throw new ApiError(0, `Can't reach the API at ${c.baseUrl}. Is uvicorn running?`);
@@ -98,14 +105,43 @@ export const api = {
 
   /**
    * Stream a run's events. EventSource can't set headers, but current_user() also
-   * accepts ?user_id=, and EventSource resends Last-Event-ID on reconnect, which the
-   * backend uses to replay from the Redis Stream.
+   * accepts ?user_id= (dev auth) and ?access_token= (jwt auth), and EventSource resends
+   * Last-Event-ID on reconnect, which the backend uses to replay from the Redis Stream.
+   * In production this is a direct, long-lived SSE connection to the API (the ALB idle timeout
+   * must exceed the server's 15 s keepalive). The poll fallback is only for buffering tunnels.
    */
   streamRun(c: Connection, runId: string, onEvent: (e: ServerEvent, id: string) => void, onFail: (msg: string) => void) {
-    // Cloudflare quick tunnels hold a streaming response until it ends, so behind one we ask the
-    // server to answer in short batches and let EventSource reconnect (a long poll).
-    const poll = import.meta.env.VITE_SSE_POLL === "1" || /trycloudflare\.com$/.test(location.hostname);
-    const url = `${c.baseUrl.replace(/\/$/, "")}/runs/${runId}/events?user_id=${encodeURIComponent(c.userId)}${poll ? "&poll=1" : ""}`;
+    let es: EventSource | null = null;
+    let closed = false;
+    void getToken().then((token) => {
+      if (closed) return;
+      es = openStream(c, runId, token, onEvent, onFail);
+    });
+    return () => {
+      closed = true;
+      es?.close();
+    };
+  },
+};
+
+/** Cloudflare quick tunnels hold a streaming response until it ends, so behind one (or with
+ * VITE_SSE_POLL=1) the server answers in short batches and EventSource reconnects (a long poll). */
+export function shouldLongPoll(hostname: string = location.hostname): boolean {
+  return import.meta.env.VITE_SSE_POLL === "1" || /trycloudflare\.com$/.test(hostname);
+}
+
+function openStream(
+  c: Connection,
+  runId: string,
+  token: string | null,
+  onEvent: (e: ServerEvent, id: string) => void,
+  onFail: (msg: string) => void,
+): EventSource {
+    const poll = shouldLongPoll();
+    const qs = new URLSearchParams({ user_id: c.userId });
+    if (token) qs.set("access_token", token);
+    if (poll) qs.set("poll", "1");
+    const url = `${c.baseUrl.replace(/\/$/, "")}/runs/${runId}/events?${qs.toString()}`;
     const es = new EventSource(url);
     let finished = false;
     const types = ["status", "text", "tool_start", "tool_result", "done", "error", "phase", "plan", "features", "checks"] as const;
@@ -145,6 +181,5 @@ export const api = {
       }
     };
     es.onopen = () => (failures = 0);
-    return () => es.close();
-  },
-};
+    return es;
+}
