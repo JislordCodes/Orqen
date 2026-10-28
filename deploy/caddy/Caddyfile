@@ -1,0 +1,50 @@
+# Single-host production front door (docker-compose.prod.yml).
+#   https://{$API_DOMAIN}          -> api:8000 (REST + SSE, unbuffered)
+#   https://*.{$PREVIEW_DOMAIN}    -> api:8000 (the API's preview middleware proxies to the sandbox)
+# Route 53 credentials come from the instance role (or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY).
+{
+	email {$ACME_EMAIL}
+	servers {
+		timeouts {
+			idle 1h
+		}
+	}
+}
+
+(api_upstream) {
+	reverse_proxy api:8000 {
+		# Stream Server-Sent Events immediately instead of buffering them.
+		flush_interval -1
+		transport http {
+			read_timeout 1h
+		}
+	}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+	import api_upstream
+}
+
+*.{$PREVIEW_DOMAIN} {
+	tls {
+		dns route53
+	}
+	import api_upstream
+}
+
+# Alternative without DNS API access: on-demand TLS, one certificate per preview host, gated by the
+# API (GET /_caddy/ask). Fine for low volume only (Let's Encrypt allows 50 certificates per week per
+# registered domain). Replace the block above with:
+#
+# {
+# 	on_demand_tls {
+# 		ask http://api:8000/_caddy/ask
+# 	}
+# }
+# https:// {
+# 	tls {
+# 		on_demand
+# 	}
+# 	import api_upstream
+# }

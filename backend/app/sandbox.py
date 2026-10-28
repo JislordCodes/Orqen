@@ -198,9 +198,29 @@ def _run_kwargs(user_id: str) -> dict:
     return kw
 
 
+_networks_ready: set[str] = set()
+
+
+def _ensure_network(dc) -> None:
+    """A user-defined SANDBOX_NETWORK (e.g. "orqen-sbx", which the EC2 host firewalls off from the
+    VPC and the metadata service) is created on first use if the host has not created it already."""
+    net = config.SANDBOX_NETWORK
+    if net in ("host", "bridge", "none") or net in _networks_ready:
+        return
+    try:
+        dc.networks.get(net)
+    except NotFound:
+        try:
+            dc.networks.create(net, driver="bridge", labels={"appbuilder": "sandbox-network"})
+        except APIError:
+            pass  # created concurrently
+    _networks_ready.add(net)
+
+
 def get_container(user_id: str):
     name = f"sbx-{user_id}"
     dc = _docker()
+    _ensure_network(dc)
     with _create_lock:
         try:
             c = dc.containers.get(name)

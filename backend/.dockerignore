@@ -1,0 +1,14 @@
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.env.*
+!.env.example
+sessions
+snapshots
+tests
+sandbox_image
+docker-compose*.yml
+Dockerfile*

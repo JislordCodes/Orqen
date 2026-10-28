@@ -1,0 +1,110 @@
+# Single-host production deployment: Caddy (TLS) + API + worker + Redis on one Docker host
+# (e.g. one EC2 m6i.xlarge+). For the multi-service AWS setup see infra/terraform and docs/DEPLOYMENT.md.
+#
+#   cp backend/.env.example backend/.env.prod   # fill in (NEBIUS_API_KEY, CORS_ORIGINS, AUTH_MODE=jwt ...)
+#   export API_DOMAIN=api.example.com PREVIEW_DOMAIN=preview.example.com ACME_EMAIL=ops@example.com
+#   export REDIS_PASSWORD=$(openssl rand -hex 24) DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+#   docker compose -f docker-compose.prod.yml --profile build build sandbox-image   # once per sandbox change
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# DNS: A records for API_DOMAIN and *.PREVIEW_DOMAIN -> this host. Open 80/443 only.
+name: orqen
+
+x-backend-env: &backend-env
+  APP_ENV: production
+  REDIS_URL: redis://redis:6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+  PREVIEW_DOMAIN: ${PREVIEW_DOMAIN:?set PREVIEW_DOMAIN}
+  PREVIEW_SCHEME: https
+  SNAPSHOT_DIR: /data/snapshots
+  SESSIONS_DIR: /data/sessions
+  SANDBOX_NETWORK: bridge
+  SANDBOX_IMAGE: ${SANDBOX_IMAGE:-orqen-sandbox:latest}
+  # Sandbox preview ports are published on the docker0 bridge address only (not on the public
+  # interface); the API and the worker's UI check reach them there.
+  SANDBOX_PUBLISH_IP: ${DOCKER_HOST_IP:-172.17.0.1}
+  SANDBOX_ADVERTISE_HOST: ${DOCKER_HOST_IP:-172.17.0.1}
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: ${API_IMAGE:-orqen-api:latest}
+    env_file: [backend/.env.prod]
+    environment:
+      <<: *backend-env
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+    volumes:
+      - orqen-data:/data:ro        # reads snapshot titles for GET /projects
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    image: ${WORKER_IMAGE:-orqen-worker:latest}
+    env_file: [backend/.env.prod]
+    environment:
+      <<: *backend-env
+      WORKER_HEALTH_PORT: "8081"
+    group_add:
+      - "${DOCKER_GID:-999}"       # group owning /var/run/docker.sock on this host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - orqen-data:/data
+    # Must be >= WORKER_SHUTDOWN_GRACE + ~45 s so running jobs can finish or be re-queued.
+    stop_grace_period: 180s
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: ./deploy/caddy
+    image: orqen-caddy:latest
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN}
+      PREVIEW_DOMAIN: ${PREVIEW_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [api]
+    restart: unless-stopped
+
+  # Builds the image sandboxes are created from (tagged on the host daemon the worker uses).
+  sandbox-image:
+    profiles: ["build"]
+    build:
+      context: ./backend/sandbox_image
+    image: ${SANDBOX_IMAGE:-orqen-sandbox:latest}
+    command: ["true"]
+
+volumes:
+  redis-data:
+  orqen-data:
+  caddy-data:
+  caddy-config:
