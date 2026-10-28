@@ -24,4 +24,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/live" || exit 1
 # --proxy-headers + forwarded-allow-ips: trust X-Forwarded-* from the ALB / Caddy in front.
 # timeout-keep-alive above the ALB's idle timeout avoids 502s on reused connections.
-CMD ["sh", "-c", "exec uvicorn app.api:app --host 0.0.0.0 --port ${PORT} --workers ${UVICORN_WORKERS} --proxy-headers --forwarded-allow-ips='*' --timeout-keep-alive 3700 --no-server-header"]
+CMD ["sh", "-c", "exec uvicorn app.api:app --host 0.0.0.0 --port ${PORT} --workers ${UVICORN_WORKERS} --proxy-headers --forwarded-allow-ips='*' --timeout-keep-alive 3700 --no-server-header --no-access-log"]

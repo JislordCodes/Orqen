@@ -13,7 +13,7 @@ import threading
 import time
 
 import docker
-from docker.errors import APIError, NotFound
+from docker.errors import APIError, ImageNotFound, NotFound
 
 from . import config, snapshots
 
@@ -243,6 +243,9 @@ def get_container(user_id: str):
             except Exception:  # noqa: BLE001
                 log.exception("restore of %s failed", user_id)
             return c
+        except ImageNotFound:
+            raise RuntimeError(f"sandbox image {config.SANDBOX_IMAGE!r} is not available on this worker host "
+                               "(build it or check SANDBOX_IMAGE / the registry login)") from None
         except APIError:
             # Another process created it between our get() and run().
             return dc.containers.get(name)

@@ -268,7 +268,8 @@ def main() -> None:
     if port:
         srv = ThreadingHTTPServer(("0.0.0.0", port), _Health)
         threading.Thread(target=srv.serve_forever, daemon=True, name="health").start()
-    threading.Thread(target=_heartbeat, daemon=True, name="heartbeat").start()
+    hb = threading.Thread(target=_heartbeat, daemon=True, name="heartbeat")
+    hb.start()
 
     r = get_redis()
     slots = threading.Semaphore(config.MAX_CONCURRENT_RUNS)
@@ -306,6 +307,7 @@ def main() -> None:
         pool.submit(guarded, job)
 
     _drain(r)
+    hb.join(timeout=3)  # so its last write cannot land after the delete below
     try:
         r.delete(config.worker_heartbeat_key(WORKER_ID))
     except Exception:  # noqa: BLE001

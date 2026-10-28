@@ -61,7 +61,7 @@ async def access_log(request: Request, call_next):
     except Exception:
         log.exception("unhandled error", extra={"method": request.method, "path": request.url.path})
         return JSONResponse({"detail": "internal error"}, status_code=500)
-    if request.url.path not in ("/health", "/ready"):
+    if request.url.path not in ("/health", "/live", "/ready"):
         log.info("request", extra={
             "method": request.method, "path": request.url.path, "status": response.status_code,
             "ms": round((time.perf_counter() - start) * 1000, 1),

@@ -43,7 +43,10 @@ def setup(service: str) -> None:
     root.addHandler(h)
     root.setLevel(config.LOG_LEVEL.upper())
     # uvicorn installs its own handlers; route them through ours so every line has one format.
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    for name in ("uvicorn", "uvicorn.error"):
         lg = logging.getLogger(name)
         lg.handlers.clear()
         lg.propagate = True
+    # The API logs every request itself (structured, see api.access_log), so uvicorn's own access
+    # lines would only duplicate them.
+    logging.getLogger("uvicorn.access").disabled = True

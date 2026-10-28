@@ -116,3 +116,12 @@ src/
 - **Gates and breaker.** Any identical call that fails 3 times with no edit in between is refused with BLOCKED.
 - **Long runs.** The worker runs builder sessions until every feature passes, a session makes no progress, or MAX_SESSIONS (6) is reached. SummarizingConversationManager compresses context at 70% (CONTEXT_WINDOW, default 131072). Optional: PLANNER_MODEL_ID. max_tokens now goes through `params` (fixes the Strands rejection).
 - New events: `phase`, `plan`, `features`, `checks`.
+
+## Deploying on Vercel
+
+Project root `frontend/`; `vercel.json` sets the build (`npm ci`, `npm run build`, output `dist`), the
+SPA rewrite and cache headers. Set `VITE_API_URL=https://api.<your-domain>` in the Vercel project
+(build time, public). The browser streams run events straight from the API over SSE; the long-poll
+fallback is only used on `*.trycloudflare.com` or with `VITE_SSE_POLL=1`. For a backend running
+`AUTH_MODE=jwt`, register your auth SDK's token getter with `setTokenProvider()` from
+`src/lib/auth.ts`. Full runbook: [`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md).
