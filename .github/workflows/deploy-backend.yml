@@ -1,0 +1,189 @@
+name: Deploy backend
+
+# Builds the api, worker and sandbox images, pushes them to ECR (tag = git sha, plus "latest"),
+# rolls the API ECS service and redeploys the worker hosts.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables):
+#   AWS_REGION            e.g. eu-west-1
+#   AWS_DEPLOY_ROLE_ARN   terraform output github_deploy_role_arn
+#   ORQEN_ENV             e.g. prod (matches terraform var.environment; default prod)
+# No AWS keys are stored: the job assumes the role through GitHub OIDC.
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_strategy:
+        description: "How to roll the worker hosts"
+        type: choice
+        default: ssm-restart
+        options:
+          - ssm-restart       # pull new images and restart the worker in place (keeps sandboxes + volumes)
+          - instance-refresh  # replace the EC2 hosts (new AMI / user-data); projects restore from S3
+          - none
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+  ORQEN_ENV: ${{ vars.ORQEN_ENV || 'prod' }}
+  PROJECT: orqen
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m compileall -q app && python -m pytest -q tests
+
+  build-push:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      registry: ${{ steps.ecr.outputs.registry }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: API image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}/api:${{ steps.meta.outputs.tag }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}/api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile.worker
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}/worker:${{ steps.meta.outputs.tag }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}/worker:latest
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
+      - name: Sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend/sandbox_image
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}/sandbox:${{ steps.meta.outputs.tag }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.PROJECT }}/sandbox:latest
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+
+  deploy-api:
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Render task definition with the new image
+        run: |
+          FAMILY="${PROJECT}-${ORQEN_ENV}-api"
+          aws ecs describe-task-definition --task-definition "$FAMILY" --query taskDefinition > td.json
+          IMAGE="${{ needs.build-push.outputs.registry }}/${PROJECT}/api:${{ needs.build-push.outputs.tag }}"
+          jq --arg img "$IMAGE" '.containerDefinitions[0].image = $img
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            td.json > td-new.json
+      - name: Deploy to ECS and wait for stability
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: td-new.json
+          cluster: ${{ env.PROJECT }}-${{ env.ORQEN_ENV }}
+          service: ${{ env.PROJECT }}-${{ env.ORQEN_ENV }}-api
+          wait-for-service-stability: true
+          wait-for-minutes: 15
+
+  deploy-worker:
+    needs: [build-push, deploy-api]
+    if: ${{ github.event_name == 'push' || inputs.worker_strategy != 'none' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Point the worker hosts at the new images
+        run: |
+          REG="${{ needs.build-push.outputs.registry }}"
+          TAG="${{ needs.build-push.outputs.tag }}"
+          aws ssm put-parameter --overwrite --type String --name "/${PROJECT}/${ORQEN_ENV}/worker_image"  --value "$REG/${PROJECT}/worker:$TAG"
+          aws ssm put-parameter --overwrite --type String --name "/${PROJECT}/${ORQEN_ENV}/sandbox_image" --value "$REG/${PROJECT}/sandbox:$TAG"
+      - name: Restart workers in place (SSM Run Command)
+        if: ${{ github.event_name == 'push' || inputs.worker_strategy == 'ssm-restart' }}
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --targets "Key=tag:Role,Values=orqen-worker" \
+            --parameters 'commands=["/opt/orqen/deploy.sh"]' \
+            --timeout-seconds 900 --max-concurrency 1 --max-errors 0 \
+            --comment "orqen deploy ${{ needs.build-push.outputs.tag }}" \
+            --query Command.CommandId --output text)
+          echo "command $CMD_ID"
+          for i in $(seq 90); do
+            STATUS=$(aws ssm list-commands --command-id "$CMD_ID" --query 'Commands[0].Status' --output text)
+            echo "status: $STATUS"
+            case "$STATUS" in
+              Success) exit 0 ;;
+              Failed|Cancelled|TimedOut) aws ssm list-command-invocations --command-id "$CMD_ID" --details --output json | jq '.CommandInvocations[].CommandPlugins[].Output'; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "timed out waiting for $CMD_ID"; exit 1
+      - name: Replace worker hosts (instance refresh)
+        if: ${{ inputs.worker_strategy == 'instance-refresh' }}
+        run: |
+          ASG="${PROJECT}-${ORQEN_ENV}-worker"
+          ID=$(aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG" --query InstanceRefreshId --output text)
+          for i in $(seq 120); do
+            STATUS=$(aws autoscaling describe-instance-refreshes --auto-scaling-group-name "$ASG" --instance-refresh-ids "$ID" --query 'InstanceRefreshes[0].Status' --output text)
+            echo "instance refresh: $STATUS"
+            case "$STATUS" in
+              Successful) exit 0 ;;
+              Failed|Cancelled|RollbackSuccessful|RollbackFailed) exit 1 ;;
+            esac
+            sleep 30
+          done
+          exit 1
