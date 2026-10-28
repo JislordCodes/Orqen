@@ -2,33 +2,34 @@
 
 Run with:  uvicorn app.api:app --host 0.0.0.0 --port 8000
 """
+import asyncio
 import json
+import logging
 import os
-import tarfile
-import time
-from pathlib import Path
-
-import httpx
 import re
 import secrets
+import time
 import uuid
 from typing import Literal
 
+import httpx
 import redis.asyncio as aioredis
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import config, preview
+from . import config, logging_setup, preview, snapshots
+from .auth import current_user
 
-app = FastAPI(title="App Builder API")
+logging_setup.setup("api")
+log = logging.getLogger("api")
 
-
-from redis.exceptions import TimeoutError as RedisTimeout
+app = FastAPI(title="Orqen API")
 
 r = aioredis.from_url(
     config.REDIS_URL,
+    password=config.REDIS_PASSWORD,
     decode_responses=True,
     socket_timeout=30,          # must be longer than the XREAD block below
     socket_connect_timeout=5,
@@ -51,26 +52,37 @@ async def preview_router(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def access_log(request: Request, call_next):
+    """One structured line per API request (SSE streams are logged when they start)."""
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("unhandled error", extra={"method": request.method, "path": request.url.path})
+        return JSONResponse({"detail": "internal error"}, status_code=500)
+    if request.url.path not in ("/health", "/ready"):
+        log.info("request", extra={
+            "method": request.method, "path": request.url.path, "status": response.status_code,
+            "ms": round((time.perf_counter() - start) * 1000, 1),
+            "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else ""),
+        })
+    return response
+
+
 # Added after the preview middleware so CORS headers wrap API responses.
+# Origins come from CORS_ORIGINS (comma-separated) and optionally CORS_ORIGIN_REGEX.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # your front end in dev
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=config.CORS_ORIGINS,
+    allow_origin_regex=config.CORS_ORIGIN_REGEX,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-User-Id", "Last-Event-ID"],
+    max_age=600,
 )
 
-
-async def current_user(
-    x_user_id: str = Header(default=""),
-    user_id: str = Query(default=""),
-) -> str:
-    """DEV ONLY auth: trusts a user id sent by the client. Replace with real auth
-    (session cookie or JWT) before anything is public. The id must be a stable, safe
-    string because it names the user's sandbox container and volume."""
-    uid = x_user_id or user_id
-    if not uid or not uid.replace("-", "").replace("_", "").isalnum() or len(uid) > 40:
-        raise HTTPException(401, "missing or invalid user id")
-    return uid
+log.info("api starting", extra={"auth_mode": config.AUTH_MODE, "cors_origins": ",".join(config.CORS_ORIGINS),
+                                 "preview_domain": config.PREVIEW_DOMAIN, "snapshot_s3": bool(config.SNAPSHOT_S3_BUCKET)})
 
 
 def check_project(project_id: str) -> str:
@@ -88,8 +100,51 @@ class RunRequest(BaseModel):
 
 @app.get("/health")
 async def health():
-    await r.ping()
+    """Liveness: the process answers. Kept backwards compatible ({"ok": true}); it also pings Redis
+    so the dev UI's "Test connection" still means "the backend works". Load balancers should use
+    /live (no dependencies) or /ready."""
+    try:
+        await r.ping()
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "redis": str(e)[:200]}, status_code=503)
     return {"ok": True}
+
+
+@app.get("/live")
+async def live():
+    """Pure liveness for container health checks: no dependencies, so a Redis blip never restarts tasks."""
+    return {"ok": True}
+
+
+@app.get("/ready")
+async def ready():
+    """Readiness: Redis answers. Also reports live workers (from their heartbeats) without failing on
+    them, since the API can serve reads and queue runs while workers restart."""
+    checks: dict = {}
+    ok = True
+    try:
+        await r.ping()
+        checks["redis"] = "ok"
+    except Exception as e:  # noqa: BLE001
+        ok = False
+        checks["redis"] = f"error: {str(e)[:200]}"
+    if ok:
+        workers = [k async for k in r.scan_iter(match="worker:*:heartbeat", count=100)]
+        checks["workers"] = len(workers)
+        checks["queue_depth"] = await r.llen(config.JOBS_QUEUE)
+    return JSONResponse({"ok": ok, **checks}, status_code=200 if ok else 503)
+
+
+@app.get("/_caddy/ask")
+async def caddy_ask(domain: str = ""):
+    """Caddy on-demand TLS gate (docker-compose.prod.yml): only issue certificates for the API host
+    and for preview subdomains that map to a live preview token. Not useful to browsers."""
+    domain = domain.lower().strip(".")
+    if config.PREVIEW_DOMAIN and domain.endswith("." + config.PREVIEW_DOMAIN):
+        token = domain[: -len(config.PREVIEW_DOMAIN) - 1]
+        if re.fullmatch(r"[a-f0-9]{16}", token) and await r.exists(config.preview_key(token)):
+            return Response(status_code=200)
+    return Response(status_code=404)
 
 
 @app.post("/runs")
@@ -119,36 +174,23 @@ async def create_run(body: RunRequest, uid: str = Depends(current_user)):
     return {"run_id": run_id, "project_id": project_id}
 
 
-def _snapshot_title(path: Path) -> str:
-    """The product name from .orqen/spec.md in a project snapshot ("# Snake — Product Spec" -> "Snake")."""
-    try:
-        with tarfile.open(path) as tf:
-            f = tf.extractfile("./.orqen/spec.md")
-            first = f.read(400).decode(errors="ignore").splitlines()[0] if f else ""
-    except Exception:
-        return ""
-    t = first.lstrip("# ").strip()
-    return re.split(r"\s+[—–-]\s+(Product )?Spec", t)[0].strip()[:60]
-
-
 @app.get("/projects")
 async def list_projects(uid: str = Depends(current_user)):
     """The user's projects, known from runs and durable snapshots, with recent runs (newest first)
     and the active run if one holds the project lock. The UI merges this into its local list."""
     ids: dict[str, float] = {p: ts for p, ts in await r.zrange(f"projects:{uid}", 0, -1, withscores=True)}
-    if config.SNAPSHOT_DIR:
-        for f in Path(config.SNAPSHOT_DIR).glob(f"{uid}-*.tar.gz"):
-            pid = f.name[len(uid) + 1 : -len(".tar.gz")]
-            if SLUG.match(pid):
-                ids[pid] = max(ids.get(pid, 0), f.stat().st_mtime)
+    # Snapshots on the local SNAPSHOT_DIR and/or S3 (blocking I/O, so off the event loop).
+    snaps = await asyncio.to_thread(snapshots.list_projects, uid)
+    for pid, (mtime, _title) in snaps.items():
+        if SLUG.match(pid):
+            ids[pid] = max(ids.get(pid, 0), mtime)
     out = []
     for pid, ts in sorted(ids.items(), key=lambda kv: -kv[1]):
         sid = f"{uid}-{pid}"
-        snap = Path(config.SNAPSHOT_DIR) / f"{sid}.tar.gz" if config.SNAPSHOT_DIR else None
         runs = [json.loads(x) for x in await r.lrange(f"runs:{sid}", 0, 19)]
         out.append({
             "id": pid,
-            "name": (_snapshot_title(snap) if snap and snap.exists() else "") or pid.replace("-", " ").capitalize(),
+            "name": snaps.get(pid, (0, ""))[1] or pid.replace("-", " ").capitalize(),
             "updated_at": ts,
             "active_run_id": await r.get(config.lock_key(sid)),
             "runs": runs,
@@ -228,8 +270,11 @@ async def create_preview(
         raise HTTPException(501, "PREVIEW_DOMAIN is not configured on the server")
     project_id = check_project(body.project_id)
     token = secrets.token_hex(8)  # unguessable: the link itself is the access control
-    await r.set(config.preview_key(token), f"{uid}-{project_id}", ex=60 * 60 * 24)
+    await r.set(config.preview_key(token), f"{uid}-{project_id}", ex=config.PREVIEW_TTL)
 
+    if config.PREVIEW_SCHEME == "https":
+        # Behind a TLS-terminating proxy (ALB / Caddy) with a wildcard certificate: no port.
+        return {"url": f"https://{token}.{config.PREVIEW_DOMAIN}/", "expires_in": config.PREVIEW_TTL}
     port = request.url.port  # same port as the API, so one open port serves both
     port_part = f":{port}" if port else ""
-    return {"url": f"http://{token}.{config.PREVIEW_DOMAIN}{port_part}/", "expires_in": 60 * 60 * 24}
+    return {"url": f"http://{token}.{config.PREVIEW_DOMAIN}{port_part}/", "expires_in": config.PREVIEW_TTL}

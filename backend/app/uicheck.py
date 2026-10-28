@@ -1,7 +1,8 @@
 """Browser smoke test: load the running app in headless Chromium and catch what unit
 tests and typecheck miss (a blank page from a runtime error, a crashing route).
 
-Runs on the worker host. Sandboxes use host networking, so the app is on localhost:PREVIEW_PORT.
+Runs on the worker host. With host networking the app is on localhost:PREVIEW_PORT; with bridge
+networking it is on the host port Docker published for the sandbox (sandbox.preview_addr).
 Skipped (never failed) when Chromium is missing."""
 import os
 import re
@@ -16,10 +17,10 @@ _ROOT_EMPTY = re.compile(r'<div id="root">\s*</div>')
 _CONSOLE = re.compile(r'INFO:CONSOLE[^\]]*\] "(.*?)", source: (\S+)')
 
 
-def _listening(port: int) -> bool:
+def _listening(host: str, port: int) -> bool:
     with socket.socket() as s:
         s.settimeout(1)
-        return s.connect_ex(("127.0.0.1", port)) == 0
+        return s.connect_ex((host, port)) == 0
 
 
 def _routes(uid: str) -> list[str]:
@@ -36,7 +37,9 @@ def check(uid: str) -> tuple[bool, str]:
     port = config.PREVIEW_PORT
     if not CHROMIUM or os.getenv("UI_CHECK", "1") == "0":
         return True, "UI check skipped (no browser on this host)."
-    if not _listening(port):
+    addr = sandbox.preview_addr(uid) or ("127.0.0.1", port)
+    host, host_port = addr
+    if not _listening(host, host_port):
         return False, (f"UI check: nothing is serving on port {port}. Start the frontend as process \"web\" "
                        "(npm run build, then vite preview on that port) and the API as \"api\", then run_checks again.")
     problems, seen = [], []
@@ -45,7 +48,7 @@ def check(uid: str) -> tuple[bool, str]:
             p = subprocess.run(
                 [CHROMIUM, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-proxy-server",
                  "--enable-logging=stderr", "--v=0", "--virtual-time-budget=6000", "--window-size=390,844",
-                 "--dump-dom", f"http://localhost:{port}{path}"],
+                 "--dump-dom", f"http://{host}:{host_port}{path}"],
                 capture_output=True, text=True, timeout=45,
             )
         except subprocess.TimeoutExpired:

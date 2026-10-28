@@ -1,8 +1,15 @@
-strands-agents[openai]
-fastapi
-uvicorn[standard]
-redis
-docker
-python-dotenv
-pydantic
-httpx
+# Pinned to the versions verified in backend/.venv (Python 3.12). Bump deliberately and re-test.
+strands-agents[openai]==1.61.0
+openai==2.54.0
+fastapi==0.143.1
+starlette==1.8.0
+uvicorn[standard]==0.54.0
+redis==8.1.0
+docker==7.2.0
+python-dotenv==1.2.4
+pydantic==2.14.1
+httpx==0.28.1
+# Production additions: S3 snapshots / sessions and JWT auth (JWKS needs cryptography).
+boto3==1.43.114
+PyJWT[crypto]==2.15.1
+cryptography==50.0.2

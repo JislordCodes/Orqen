@@ -15,10 +15,25 @@ import time
 import docker
 from docker.errors import APIError, NotFound
 
-from . import config
+from . import config, snapshots
 
-_dc = docker.from_env()
+_dc_client = None
 _create_lock = threading.Lock()
+
+
+def _docker():
+    """Docker client, created on first use (importing this module must not need a daemon)."""
+    global _dc_client
+    if _dc_client is None:
+        _dc_client = docker.from_env()
+    return _dc_client
+
+
+def docker_ok() -> bool:
+    try:
+        return bool(_docker().ping())
+    except Exception:  # noqa: BLE001
+        return False
 
 WORKSPACE = "/workspace"
 log = logging.getLogger("sandbox")
@@ -56,6 +71,7 @@ def snapshot(user_id: str) -> bool:
             with open(tmp, "wb") as f:
                 f.write(out)
             os.replace(tmp, path)
+            snapshots.upload(user_id, path)
             return True
         except Exception:  # noqa: BLE001 - a snapshot must never break a run
             log.exception("snapshot of %s failed", user_id)
@@ -73,16 +89,20 @@ def archive(user_id: str, label: str = "") -> str | None:
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(path, "rb") as src, open(dest, "wb") as out:
         out.write(src.read())
+    snapshots.upload(user_id, dest, name="archive/" + os.path.basename(dest))
     return dest
 
 
 def _restore(user_id: str, container) -> None:
     path = _snapshot_path(user_id)
-    if not path or not os.path.exists(path):
+    if not path:
         return
     _, out = container.exec_run(["sh", "-c", f"ls -A {WORKSPACE}"])
     if out and out.strip():
         return  # the volume survived; nothing to restore
+    # A new worker host has no local copy: fetch the S3 one when snapshots go to S3.
+    if not os.path.exists(path) and not snapshots.download(user_id, path):
+        return
     with open(path, "rb") as f:
         data = f.read()
     container.exec_run(["mkdir", "-p", WORKSPACE])
@@ -112,30 +132,92 @@ def safe_path(path: str) -> str:
     return full
 
 
+def _host_network() -> bool:
+    return config.SANDBOX_NETWORK == "host"
+
+
+def preview_addr(user_id: str, container=None) -> tuple[str, int] | None:
+    """(host, port) where the sandbox's PREVIEW_PORT can be reached from this worker host and, via
+    SANDBOX_ADVERTISE_HOST, from the API. Host networking: the port itself on this host. Otherwise the
+    random host port Docker published for it."""
+    if _host_network():
+        return config.SANDBOX_ADVERTISE_HOST, config.PREVIEW_PORT
+    try:
+        c = container or _docker().containers.get(f"sbx-{user_id}")
+        c.reload()
+        binding = (c.attrs["NetworkSettings"]["Ports"] or {}).get(f"{config.PREVIEW_PORT}/tcp") or []
+        if binding:
+            return config.SANDBOX_ADVERTISE_HOST, int(binding[0]["HostPort"])
+    except Exception:  # noqa: BLE001
+        log.exception("could not read the published preview port of %s", user_id)
+    return None
+
+
+def register_addr(user_id: str, container=None) -> None:
+    """Record where the sandbox's preview is reachable, so the API (on any host) can proxy to it."""
+    addr = preview_addr(user_id, container)
+    if not addr:
+        return
+    try:
+        from .events import get_redis
+
+        get_redis().set(config.sandbox_addr_key(user_id), f"{addr[0]}:{addr[1]}")
+    except Exception:  # noqa: BLE001 - previews degrade, runs keep going
+        log.exception("could not register the preview address of %s", user_id)
+
+
+def _wrong_network(c) -> bool:
+    """A container made under a different SANDBOX_NETWORK (e.g. host before a switch to bridge)."""
+    mode = c.attrs.get("HostConfig", {}).get("NetworkMode", "")
+    want = config.SANDBOX_NETWORK
+    if want == "host":
+        return mode != "host"
+    return mode == "host" or (want != "bridge" and mode not in (want, "default"))
+
+
+def _run_kwargs(user_id: str) -> dict:
+    kw: dict = dict(
+        name=f"sbx-{user_id}",
+        command="sleep infinity",
+        detach=True,
+        working_dir=WORKSPACE,
+        volumes={f"ws-{user_id}": {"bind": WORKSPACE, "mode": "rw"}},
+        network_mode=config.SANDBOX_NETWORK,
+        mem_limit=config.SANDBOX_MEM,
+        nano_cpus=int(config.SANDBOX_CPUS * 1_000_000_000),
+        pids_limit=256,
+        labels={"appbuilder": "sandbox", "user": user_id},
+    )
+    if not _host_network():
+        # Own network namespace per sandbox; the preview port gets a random free host port.
+        kw["ports"] = {f"{config.PREVIEW_PORT}/tcp": (config.SANDBOX_PUBLISH_IP, None)}
+        kw["security_opt"] = ["no-new-privileges"]
+        kw["cap_drop"] = ["NET_RAW", "MKNOD", "AUDIT_WRITE"]
+    if config.SANDBOX_RUNTIME:
+        kw["runtime"] = config.SANDBOX_RUNTIME
+    return kw
+
+
 def get_container(user_id: str):
     name = f"sbx-{user_id}"
+    dc = _docker()
     with _create_lock:
         try:
-            c = _dc.containers.get(name)
+            c = dc.containers.get(name)
+            if _wrong_network(c):
+                # Recreate on the configured network. The workspace lives in the volume, so nothing is lost.
+                log.info("recreating %s on network %s", name, config.SANDBOX_NETWORK)
+                c.remove(force=True)
+                raise NotFound(name)
             if c.status != "running":
                 c.start()
+                register_addr(user_id, c)  # a restart may publish a different host port
             return c
         except NotFound:
             pass
         try:
-            c = _dc.containers.run(
-                config.SANDBOX_IMAGE,
-                name=name,
-                command="sleep infinity",
-                detach=True,
-                working_dir=WORKSPACE,
-                volumes={f"ws-{user_id}": {"bind": WORKSPACE, "mode": "rw"}},
-                network_mode=config.SANDBOX_NETWORK,
-                mem_limit=config.SANDBOX_MEM,
-                nano_cpus=int(config.SANDBOX_CPUS * 1_000_000_000),
-                pids_limit=256,
-                labels={"appbuilder": "sandbox", "user": user_id},
-            )
+            c = dc.containers.run(config.SANDBOX_IMAGE, **_run_kwargs(user_id))
+            register_addr(user_id, c)
             try:
                 _restore(user_id, c)
             except Exception:  # noqa: BLE001
@@ -143,7 +225,7 @@ def get_container(user_id: str):
             return c
         except APIError:
             # Another process created it between our get() and run().
-            return _dc.containers.get(name)
+            return dc.containers.get(name)
 
 
 def exec_argv(user_id: str, argv: list[str], timeout: int = 60) -> tuple[int, str]:

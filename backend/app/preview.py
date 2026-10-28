@@ -5,8 +5,12 @@ How it works
      that maps to the project's sandbox, and return a URL like  http://<token>.<PREVIEW_DOMAIN>:8000/
   2. The browser opens that URL (or puts it in an iframe). The request still lands on this API server,
      because every subdomain of PREVIEW_DOMAIN points at it.
-  3. A middleware (see api.py) sees the Host header, looks the token up, finds the sandbox
-     container's IP, and forwards the request to <ip>:PREVIEW_PORT.
+  3. A middleware (see api.py) sees the Host header, looks the token up, finds where the sandbox's
+     app is reachable, and forwards the request there:
+       - bridge networking (production): the worker records host:port of the sandbox's published
+         PREVIEW_PORT in Redis (sandbox:<id>:addr), so the API can run on another machine (Fargate)
+         and still reach any worker host over the VPC;
+       - otherwise (legacy dev): the container's IP from the local Docker daemon.
 
 Why subdomains and not /preview/<id>/ paths: apps use absolute links like /static/app.css, which
 break under a path prefix. A subdomain gives each app its own root, like Replit does.
@@ -14,20 +18,19 @@ break under a path prefix. A subdomain gives each app its own root, like Replit 
 Limits of this version
   - Plain HTTP only. WebSockets (for example hot reload in Vite) are not proxied yet.
   - The token is a secret link: anyone who has it can view the preview until it expires.
-  - It needs access to the Docker daemon, so it works when the API runs on the same host as the sandboxes.
+  - Without a registered address it falls back to the local Docker daemon (same-host setups only).
 """
 import asyncio
 import time
 
 import docker
 import httpx
-from docker.errors import NotFound
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
 
 from . import config
 
-_dc = docker.from_env()
+_dc = None
 _http = httpx.AsyncClient(timeout=30, follow_redirects=False)
 
 # Headers that must not be copied between the two HTTP hops.
@@ -38,6 +41,9 @@ _ip_cache: dict[str, tuple[float, str]] = {}
 
 
 def _lookup_ip(sandbox_id: str) -> str:
+    global _dc
+    if _dc is None:
+        _dc = docker.from_env()  # lazily: the API may run where there is no Docker daemon
     c = _dc.containers.get(f"sbx-{sandbox_id}")
     nets = c.attrs["NetworkSettings"]["Networks"]
     return next(iter(nets.values()))["IPAddress"]
@@ -66,12 +72,14 @@ async def proxy(request: Request, token: str, r) -> Response:
     if not sandbox_id:
         return _message("Preview link expired", "Ask for a new preview link.", 404)
 
-    try:
-        ip = await _container_ip(sandbox_id)
-    except (NotFound, KeyError, StopIteration):
-        return _message("Sandbox is not running", "Start a run first so the sandbox exists.", 502)
+    target = await r.get(config.sandbox_addr_key(sandbox_id))
+    if not target:
+        try:
+            target = f"{await _container_ip(sandbox_id)}:{config.PREVIEW_PORT}"
+        except Exception:  # noqa: BLE001 - NotFound, no Docker daemon here, no network
+            return _message("Sandbox is not running", "Start a run first so the sandbox exists.", 502)
 
-    url = f"http://{ip}:{config.PREVIEW_PORT}{request.url.path}"
+    url = f"http://{target}{request.url.path}"
     if request.url.query:
         url += f"?{request.url.query}"
 

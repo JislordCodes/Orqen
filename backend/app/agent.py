@@ -25,12 +25,37 @@ def _model() -> OpenAIModel:
     )
 
 
+def _session_manager(session_id: str):
+    """Chat history store: local files (dev, single worker host) or S3 (several worker hosts)."""
+    if config.SESSIONS_S3_BUCKET:
+        from strands.session.s3_session_manager import S3SessionManager
+
+        return S3SessionManager(session_id=session_id, bucket=config.SESSIONS_S3_BUCKET,
+                                prefix=config.SESSIONS_S3_PREFIX, region_name=config.AWS_REGION)
+    return FileSessionManager(session_id=session_id, storage_dir=config.SESSIONS_DIR)
+
+
+def _set_aside_s3_session(session_id: str) -> None:
+    """S3 equivalent of renaming a stale session directory: move its objects under stale-<ts>/."""
+    import boto3
+
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    src = f"{config.SESSIONS_S3_PREFIX}session_{session_id}/"
+    dst = f"{config.SESSIONS_S3_PREFIX}stale-{int(time.time())}/session_{session_id}/"
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=config.SESSIONS_S3_BUCKET, Prefix=src):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            s3.copy_object(Bucket=config.SESSIONS_S3_BUCKET, Key=dst + key[len(src):],
+                           CopySource={"Bucket": config.SESSIONS_S3_BUCKET, "Key": key})
+            s3.delete_object(Bucket=config.SESSIONS_S3_BUCKET, Key=key)
+
+
 def build_agent(ctx: RunContext, role: str = "builder") -> Agent:
     # Chat history per project and role. A new Agent with the same session_id restores the
     # earlier conversation, so "now add login" has context. The builder keeps the original
     # session id so projects created before the harness keep their history.
     session_id = ctx.sandbox_id if role == "builder" else f"{ctx.sandbox_id}-{role}"
-    session_manager = FileSessionManager(session_id=session_id, storage_dir=config.SESSIONS_DIR)
+    session_manager = _session_manager(session_id)
 
     # Long builds: summarise the oldest part of the conversation before the context window
     # fills up (proactive), instead of failing or losing the thread. The plan files and
@@ -70,7 +95,10 @@ def build_agent(ctx: RunContext, role: str = "builder") -> Agent:
         # the plan files and progress.md in the workspace carry the project's state.
         if "conversation manager state" not in str(e):
             raise
-        old = os.path.join(config.SESSIONS_DIR, f"session_{session_id}")
-        if os.path.isdir(old):
-            os.replace(old, f"{old}.stale-{int(time.time())}")
-        return make(FileSessionManager(session_id=session_id, storage_dir=config.SESSIONS_DIR))
+        if config.SESSIONS_S3_BUCKET:
+            _set_aside_s3_session(session_id)
+        else:
+            old = os.path.join(config.SESSIONS_DIR, f"session_{session_id}")
+            if os.path.isdir(old):
+                os.replace(old, f"{old}.stale-{int(time.time())}")
+        return make(_session_manager(session_id))

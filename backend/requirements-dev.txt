@@ -1,0 +1,5 @@
+# Test-only dependencies (CI installs these on top of requirements.txt).
+-r requirements.txt
+pytest==9.2.0
+fakeredis==2.40.0
+anyio==4.15.1
