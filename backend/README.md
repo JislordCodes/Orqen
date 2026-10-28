@@ -100,7 +100,15 @@ are not proxied yet.
 | `done` | `{summary}` |
 | `error` | `{message}` |
 
-## Know before you ship
+## Production
+
+Production deployment (AWS, Docker images, Terraform, env vars) is documented in
+[`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) and [`../docs/ENV.md`](../docs/ENV.md). In short:
+`AUTH_MODE=jwt`, `CORS_ORIGINS`, `SANDBOX_NETWORK=bridge` (or a named network) so every sandbox gets
+its own published preview port, `SNAPSHOT_S3_BUCKET` / `SESSIONS_S3_BUCKET` for durable state, and
+`LOG_FORMAT=json`. Tests: `pip install -r requirements-dev.txt && python -m pytest -q tests`.
+
+## Know before you ship (original notes; see ../docs/PRODUCTION-CHECKLIST.md for current status)
 
 - **Not run-tested here.** The syntax is checked, and the Strands calls (`AnthropicModel`, `@tool`,
   `callback_handler`) follow the current Strands docs, but start with the Try it step above and
