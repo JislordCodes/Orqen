@@ -1,0 +1,8 @@
+# Used with docker-compose.prod.yml on the single free-plan host (see deploy/single-host/README.md).
+# Stock Caddy (no Route 53 module needed) with the on-demand TLS Caddyfile.
+services:
+  caddy:
+    build: !reset null
+    image: caddy:2
+    volumes:
+      - ./deploy/single-host/Caddyfile:/etc/caddy/Caddyfile:ro

@@ -77,7 +77,10 @@ interface State {
 }
 
 const ENV_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-const ENV_USER = (import.meta.env.VITE_USER_ID as string | undefined) || "demo-user";
+/** Dev auth: one anonymous id per browser unless VITE_USER_ID pins one (keeps visitors' projects apart). */
+const ENV_USER =
+  (import.meta.env.VITE_USER_ID as string | undefined) ||
+  `user-${(globalThis.crypto?.randomUUID?.() ?? Math.random().toString(16).slice(2)).replace(/-/g, "").slice(0, 12)}`;
 const streams = new Map<string, () => void>();
 
 const FIRST: Project = { id: "main", name: "My first system", createdAt: Date.now() };

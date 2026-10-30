@@ -57,6 +57,8 @@ jobs:
 
   build-push:
     needs: test
+    # Terraform (ECS) path only; the single-host path is deploy-single-host.yml.
+    if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' }}
     runs-on: ubuntu-latest
     environment: production
     outputs:

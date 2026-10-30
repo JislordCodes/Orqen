@@ -1,0 +1,61 @@
+name: Deploy single host (AWS free plan)
+
+# One EC2 m7i-flex.large running docker-compose.prod.yml (Caddy + API + worker + Redis), reachable
+# at https://api.<ip>.sslip.io. See deploy/single-host/README.md.
+#
+# Repository secrets:
+#   AWS_CREDS        ACCESS_KEY_ID:SECRET_ACCESS_KEY of an IAM user allowed to manage EC2/IAM/SSM
+#   NEBIUS_API_KEY   LLM key for the worker
+# Optional repository variables: AWS_REGION (default eu-west-1), CORS_ORIGINS, MODEL_ID
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy = create/reuse; redeploy = git pull + rebuild on the host; destroy = delete everything"
+        type: choice
+        default: deploy
+        options: [deploy, redeploy, destroy]
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "deploy/single-host/**"
+      - "docker-compose.prod.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-single-host
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      HAS_CREDS: ${{ secrets.AWS_CREDS != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip when not configured
+        if: env.HAS_CREDS != 'true'
+        run: echo "AWS_CREDS secret not set; nothing to do."
+      - name: AWS credentials
+        if: env.HAS_CREDS == 'true'
+        env:
+          CREDS: ${{ secrets.AWS_CREDS }}
+        run: |
+          CREDS=$(printf '%s' "$CREDS" | tr -d '[:space:]')
+          id="${CREDS%%:*}"; sec="${CREDS#*:}"
+          echo "::add-mask::$id"; echo "::add-mask::$sec"
+          { echo "AWS_ACCESS_KEY_ID=$id"; echo "AWS_SECRET_ACCESS_KEY=$sec"; } >> "$GITHUB_ENV"
+      - name: Provision
+        if: env.HAS_CREDS == 'true'
+        env:
+          ACTION: ${{ github.event_name == 'push' && 'redeploy' || inputs.action }}
+          NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          MODEL_ID: ${{ vars.MODEL_ID }}
+        run: bash deploy/single-host/provision.sh
