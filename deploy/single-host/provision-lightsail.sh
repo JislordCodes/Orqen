@@ -51,12 +51,20 @@ if [ "$ACTION" = destroy ]; then
   exit 0
 fi
 
-# ---- static IP (stable address -> stable sslip.io hostname)
-$L get-static-ip --static-ip-name $IPN >/dev/null 2>&1 || $L allocate-static-ip --static-ip-name $IPN >/dev/null
-IP=$($L get-static-ip --static-ip-name $IPN --query staticIp.ipAddress --output text)
-DASHED=${IP//./-}
-API_DOMAIN=api.$DASHED.sslip.io
-PREVIEW_DOMAIN=preview.$DASHED.sslip.io
+# ---- static IP when the account allows it (stable address); else the instance's own public IP
+STATIC=1
+if ! $L get-static-ip --static-ip-name $IPN >/dev/null 2>&1; then
+  $L allocate-static-ip --static-ip-name $IPN >/dev/null 2>&1 || { STATIC=0; echo "static IP not allowed; using the instance's public IP"; }
+fi
+if [ $STATIC = 1 ]; then
+  IP=$($L get-static-ip --static-ip-name $IPN --query staticIp.ipAddress --output text)
+  DASHED=${IP//./-}; API_DOMAIN=api.$DASHED.sslip.io; PREVIEW_DOMAIN=preview.$DASHED.sslip.io
+elif exists; then
+  IP=$($L get-instance --instance-name $N --query instance.publicIpAddress --output text)
+  DASHED=${IP//./-}; API_DOMAIN=api.$DASHED.sslip.io; PREVIEW_DOMAIN=preview.$DASHED.sslip.io
+else
+  DASHED=auto; API_DOMAIN=AUTO; PREVIEW_DOMAIN=AUTO
+fi
 ENVF=$(mktemp); backend_env "$DASHED" > "$ENVF"
 
 if [ "$ACTION" = redeploy ]; then
@@ -102,14 +110,17 @@ for _ in $(seq 1 40); do
   st=$($L get-instance --instance-name $N --query instance.state.name --output text)
   [ "$st" = running ] && break; sleep 10
 done
-$L attach-static-ip --static-ip-name $IPN --instance-name $N >/dev/null 2>&1 || true
+if [ $STATIC = 1 ]; then $L attach-static-ip --static-ip-name $IPN --instance-name $N >/dev/null 2>&1 || true; fi
+sleep 5
+IP=$($L get-instance --instance-name $N --query instance.publicIpAddress --output text)
+DASHED=${IP//./-}; API_DOMAIN=api.$DASHED.sslip.io
 $L put-instance-public-ports --instance-name $N --port-infos \
   fromPort=22,toPort=22,protocol=tcp fromPort=80,toPort=80,protocol=tcp \
   fromPort=443,toPort=443,protocol=tcp fromPort=443,toPort=443,protocol=udp >/dev/null
 BUNDLE=$($L get-instance --instance-name $N --query instance.bundleId --output text)
 
 summary "## Orqen backend (Lightsail)"
-summary "- Instance: $N ($BUNDLE, $R), static IP $IP"
+summary "- Instance: $N ($BUNDLE, $R), IP $IP (static: $STATIC)"
 summary "- API: https://$API_DOMAIN (health: https://$API_DOMAIN/health)"
 summary "- Set VITE_API_URL=https://$API_DOMAIN in Vercel and redeploy the frontend."
 summary "- First boot installs Docker and builds the images: allow ~15-20 minutes."

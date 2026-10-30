@@ -5,9 +5,15 @@ exec > >(tee -a /var/log/orqen-setup.log) 2>&1
 
 mkdir -p /etc/orqen
 echo "__REGION__" > /etc/orqen/region
-cat > /etc/orqen/compose.env <<EOF
 API_DOMAIN=__API_DOMAIN__
 PREVIEW_DOMAIN=__PREVIEW_DOMAIN__
+if [ "$API_DOMAIN" = AUTO ]; then   # no static IP: derive the sslip.io names from this host's public IP
+  PUBIP=$(curl -fsS --retry 5 https://checkip.amazonaws.com | tr -d '[:space:]')
+  D=${PUBIP//./-}; API_DOMAIN=api.$D.sslip.io; PREVIEW_DOMAIN=preview.$D.sslip.io
+fi
+cat > /etc/orqen/compose.env <<EOF
+API_DOMAIN=$API_DOMAIN
+PREVIEW_DOMAIN=$PREVIEW_DOMAIN
 ACME_EMAIL=__ACME_EMAIL__
 REDIS_PASSWORD=$(openssl rand -hex 24)
 SANDBOX_IMAGE=orqen-sandbox:latest
