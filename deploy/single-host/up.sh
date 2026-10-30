@@ -6,9 +6,13 @@ cd /opt/orqen
 git fetch --depth 1 origin main
 git reset --hard origin/main
 
-REGION=$(cat /etc/orqen/region)
-aws ssm get-parameter --region "$REGION" --name /orqen/single/env --with-decryption \
-  --query Parameter.Value --output text > backend/.env.prod
+if [ -f /etc/orqen/backend.env ]; then          # Lightsail: env delivered by user-data / SSH
+  cp /etc/orqen/backend.env backend/.env.prod
+else                                              # EC2: env lives in SSM Parameter Store
+  REGION=$(cat /etc/orqen/region)
+  aws ssm get-parameter --region "$REGION" --name /orqen/single/env --with-decryption \
+    --query Parameter.Value --output text > backend/.env.prod
+fi
 chmod 600 backend/.env.prod
 
 cp /etc/orqen/compose.env .env

@@ -1,12 +1,12 @@
 name: Deploy single host (AWS free plan)
 
-# One EC2 m7i-flex.large running docker-compose.prod.yml (Caddy + API + worker + Redis), reachable
+# One Lightsail instance (default; vars.PLATFORM=ec2 for an EC2 m7i-flex.large) running docker-compose.prod.yml (Caddy + API + worker + Redis), reachable
 # at https://api.<ip>.sslip.io. See deploy/single-host/README.md.
 #
 # Repository secrets:
 #   AWS_CREDS        ACCESS_KEY_ID:SECRET_ACCESS_KEY of an IAM user allowed to manage EC2/IAM/SSM
 #   NEBIUS_API_KEY   LLM key for the worker
-# Optional repository variables: AWS_REGION (default eu-west-1), CORS_ORIGINS, MODEL_ID
+# Optional repository variables: PLATFORM (lightsail|ec2), AWS_REGION (default us-east-1), CORS_ORIGINS, MODEL_ID
 
 on:
   workflow_dispatch:
@@ -35,7 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PLATFORM: ${{ vars.PLATFORM || 'lightsail' }}
       HAS_CREDS: ${{ secrets.AWS_CREDS != '' }}
     steps:
       - uses: actions/checkout@v4
@@ -58,4 +59,5 @@ jobs:
           NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
           MODEL_ID: ${{ vars.MODEL_ID }}
-        run: bash deploy/single-host/provision.sh
+        run: |
+          if [ "$PLATFORM" = ec2 ]; then bash deploy/single-host/provision.sh; else bash deploy/single-host/provision-lightsail.sh; fi
