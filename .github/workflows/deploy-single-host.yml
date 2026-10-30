@@ -15,7 +15,7 @@ on:
         description: "deploy = create/reuse; redeploy = git pull + rebuild on the host; destroy = delete everything"
         type: choice
         default: deploy
-        options: [deploy, redeploy, destroy]
+        options: [deploy, redeploy, destroy, probe]
   push:
     branches: [main]
     paths:

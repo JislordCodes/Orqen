@@ -52,6 +52,21 @@ EOF
   echo "env stored in SSM /orqen/single/env"
 }
 
+if [ "$ACTION" = probe ]; then
+  # Which regions / calls does this account allow? (organizations SCPs often restrict both)
+  aws iam get-user --query User.Arn --output text 2>&1 | tail -1 || true
+  for reg in us-east-1 us-east-2 us-west-2 eu-west-1 eu-central-1 eu-west-2 af-south-1; do
+    for c in "ec2 describe-instances" "ec2 describe-addresses" "ec2 describe-vpcs" "ssm describe-parameters" "ec2 describe-instance-type-offerings --filters Name=instance-type,Values=m7i-flex.large,t3.small,t3.medium,t3.large --query InstanceTypeOfferings[].InstanceType"; do
+      out=$(aws --region "$reg" $c --output text 2>&1 | tr '\n' ' ' | cut -c1-160) && echo "OK   $reg $c :: $out" || echo "DENY $reg $c :: $out"
+    done
+    for t in m7i-flex.large t3.large t3.medium t3.small; do
+      out=$(aws --region "$reg" ec2 run-instances --dry-run --instance-type $t --image-id "$(aws --region $reg ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id --query Parameter.Value --output text 2>/dev/null)" 2>&1 | cut -c1-160)
+      echo "RUN  $reg $t :: $out"
+    done
+  done
+  exit 0
+fi
+
 if [ "$ACTION" = destroy ]; then
   id=$(instance_id); if [ -n "$id" ]; then aws ec2 terminate-instances --instance-ids "$id" >/dev/null; aws ec2 wait instance-terminated --instance-ids "$id"; fi
   a=$(eip_alloc); [ "$a" != None ] && aws ec2 release-address --allocation-id "$a" || true
