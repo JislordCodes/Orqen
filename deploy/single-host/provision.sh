@@ -53,6 +53,7 @@ EOF
 }
 
 if [ "$ACTION" = probe ]; then
+  set +e
   # Which regions / services does this account allow? (organizations SCPs often restrict both)
   set +e
   aws ec2 describe-instances --region us-east-1 2>&1 | tail -2

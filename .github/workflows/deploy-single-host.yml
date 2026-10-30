@@ -35,8 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PLATFORM: ${{ vars.PLATFORM || 'lightsail' }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+      PLATFORM: ${{ vars.PLATFORM || 'ec2' }}
       HAS_CREDS: ${{ secrets.AWS_CREDS != '' }}
     steps:
       - uses: actions/checkout@v4
